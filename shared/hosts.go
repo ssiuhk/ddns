@@ -14,6 +14,10 @@ type Host struct {
 	Token      string `redis:"token"`
 	Persistent bool   `redis:"persistent"`
 
+	// UpdatedAt is when the record was last set, as a Unix time; zero for
+	// hosts saved before it was tracked.
+	UpdatedAt int64 `redis:"updated"`
+
 	// ExpiresIn is how long the host is kept without an update; zero for
 	// persistent hosts. It is only filled in when reading hosts.
 	ExpiresIn time.Duration `redis:"-"`
@@ -25,6 +29,11 @@ func (h *Host) GenerateAndSetToken() {
 	hash.Write([]byte(h.Hostname))
 
 	h.Token = fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+// Touch records that the record has just been set.
+func (h *Host) Touch() {
+	h.UpdatedAt = time.Now().Unix()
 }
 
 func (h *Host) IsIPv4() bool {

@@ -211,6 +211,9 @@ type hostView struct {
 	FQDN    string
 	Type    string
 	Expires string
+	// Updated says how long ago the record was set, UpdatedTime when exactly
+	Updated     string
+	UpdatedTime string
 }
 
 func (a *Admin) view(host *shared.Host) *hostView {
@@ -224,7 +227,17 @@ func (a *Admin) view(host *shared.Host) *hostView {
 		expires = "in " + humanDuration(host.ExpiresIn)
 	}
 
-	return &hostView{Host: host, FQDN: host.Hostname + a.config.Domain, Type: recordType, Expires: expires}
+	updated, updatedTime := "unknown", ""
+	if host.UpdatedAt > 0 {
+		at := time.Unix(host.UpdatedAt, 0).UTC()
+		updated = humanDuration(time.Since(at)) + " ago"
+		updatedTime = at.Format("2006-01-02 15:04:05 UTC")
+	}
+
+	return &hostView{
+		Host: host, FQDN: host.Hostname + a.config.Domain, Type: recordType, Expires: expires,
+		Updated: updated, UpdatedTime: updatedTime,
+	}
 }
 
 func humanDuration(d time.Duration) string {
@@ -320,6 +333,7 @@ func (a *Admin) createHost(c *gin.Context) {
 
 	host := &shared.Host{Hostname: hostname, Ip: ip, Persistent: form["Persistent"].(bool)}
 	host.GenerateAndSetToken()
+	host.Touch()
 	if err := a.store.SetHost(host); err != nil {
 		fail("Could not save the host: " + err.Error())
 		return
@@ -377,6 +391,7 @@ func (a *Admin) updateHost(c *gin.Context) {
 
 	host.Ip = ip
 	host.Persistent = c.PostForm("persistent") != ""
+	host.Touch()
 	if err := a.store.SetHost(host); err != nil {
 		a.renderHost(c, http.StatusInternalServerError, host, "Could not save the host: "+err.Error())
 		return
