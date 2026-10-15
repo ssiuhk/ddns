@@ -17,6 +17,10 @@ type Config struct {
 	ListenFrontend     string
 	ListenBackend      string
 	RedisHost          string
+	Nameservers        []string
+	Replica            bool
+
+	nameserverList string
 
 	// Admin panel
 	PublicURL          string
@@ -43,6 +47,12 @@ func (c *Config) Initialize() {
 
 	flag.IntVar(&c.HostExpirationDays, "expiration-days", 10,
 		"The number of days after a host is released when it is not updated")
+
+	flag.StringVar(&c.nameserverList, "nameservers", os.Getenv("DDNS_NAMESERVERS"),
+		"Comma separated FQDNs of all nameservers of the zone, defaults to --soa_fqdn (env DDNS_NAMESERVERS)")
+
+	flag.BoolVar(&c.Replica, "replica", os.Getenv("DDNS_REPLICA") == "true",
+		"Run as a secondary server: only serve DNS from data synced from the primary (env DDNS_REPLICA)")
 
 	flag.BoolVar(&c.DNSSEC, "dnssec", true,
 		"Sign the zone with DNSSEC, creating a key on startup if there is none")
@@ -78,6 +88,16 @@ func (c *Config) Validate() {
 
 	if c.SOAFqdn == "" {
 		log.Fatal("You have to supply the server FQDN via --soa_fqdn=FQDN")
+	}
+
+	c.Nameservers = nil
+	for _, ns := range strings.Split(c.nameserverList, ",") {
+		if ns = NormalizeName(strings.TrimSpace(ns)); ns != "" {
+			c.Nameservers = append(c.Nameservers, ns)
+		}
+	}
+	if len(c.Nameservers) == 0 {
+		c.Nameservers = []string{c.SOAFqdn}
 	}
 
 	c.PublicURL = strings.TrimSuffix(c.PublicURL, "/")

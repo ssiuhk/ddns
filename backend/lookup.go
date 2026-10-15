@@ -54,7 +54,9 @@ func (l *HostLookup) Lookup(request *Request) ([]*Response, error) {
 		records = []*Response{
 			l.record(request.QName, "SOA", fmt.Sprintf("%s. hostmaster.%s. %d 1800 3600 7200 5",
 				l.config.SOAFqdn, l.config.Zone(), l.currentSOASerial())),
-			l.record(request.QName, "NS", l.config.SOAFqdn),
+		}
+		for _, ns := range l.nameservers() {
+			records = append(records, l.record(request.QName, "NS", ns))
 		}
 	} else {
 		hostname, err := l.extractHostname(queryName)
@@ -94,6 +96,13 @@ func (l *HostLookup) Lookup(request *Request) ([]*Response, error) {
 
 func (l *HostLookup) record(qname, qtype, content string) *Response {
 	return &Response{QType: qtype, QName: qname, Content: content, TTL: recordTTL, DomainID: zoneID, Auth: true}
+}
+
+func (l *HostLookup) nameservers() []string {
+	if len(l.config.Nameservers) > 0 {
+		return l.config.Nameservers
+	}
+	return []string{l.config.SOAFqdn}
 }
 
 // extractHostname extract the host part of the fqdn: pi.d.example.org -> pi

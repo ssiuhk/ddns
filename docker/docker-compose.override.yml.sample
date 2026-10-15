@@ -5,6 +5,8 @@ services:
       DDNS_SOA_DOMAIN: ddns.example.net               # <<< ADJUST DOMAIN
       DDNS_EXPIRATION_DAYS: 10
       DDNS_PUBLIC_URL: https://ddns.example.net       # <<< ADJUST DOMAIN
+      # With a secondary server, list every nameserver of the zone (README)
+      # DDNS_NAMESERVERS: ddns.example.net,ns2.example.net
       # Optional: sign in to the admin panel with Google, see README
       # DDNS_GOOGLE_CLIENT_ID: ...
       # DDNS_GOOGLE_CLIENT_SECRET: ...

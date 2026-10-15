@@ -149,3 +149,48 @@ refused for 15 minutes.
 3. Run `docker compose --project-name ddns up -d` again.
 
 The password login stays available as long as a password is set, so you can always get in from the server.
+
+### Backups
+
+The `backup` service takes a compressed backup of all `ddns` data (hosts, DNSSEC keys and the admin password) every
+day into `docker/.backups` and deletes backups older than 180 days. It runs on every server, including secondaries.
+To restore a backup:
+
+```
+docker compose --project-name ddns exec -T ddns ddns load < .backups/ddns-backup-<time>.json.gz
+```
+
+Loading replaces all `ddns` data in Redis in one step. `ddns dump` writes the current data to stdout, for a backup on
+demand. The Redis instance has to be dedicated to `ddns`, as hosts are stored as top level keys.
+
+### Secondary nameserver
+
+A second server can answer for the zone as well, so DNS keeps working when one of them is down. The primary keeps
+taking all updates and runs the admin panel; the secondary only answers DNS from a copy of the primary's data.
+
+1. Give the secondary a name, e.g. `ns2.example.net`, with an `A`/`AAAA` record, and add it as a second `NS` record
+   for `d.example.net` in the parent zone next to `ddns.example.net`.
+2. On the primary, set `DDNS_NAMESERVERS: ddns.example.net,ns2.example.net` in `docker-compose.override.yml` and run
+   `docker compose --project-name ddns up -d` again, so the zone announces both nameservers.
+3. On the secondary, clone the repository and use
+   [the secondary sample](./docker/docker-compose.override.yml.secondary.sample) as `docker-compose.override.yml`,
+   with the same domain settings as the primary. `DDNS_REPLICA: "true"` makes it serve DNS only: no web frontend, no
+   admin panel and no DNSSEC key of its own. Start it with `docker compose --project-name ddns up -d --build`.
+4. On the primary, copy the data over SSH. This needs a key based SSH login to a user on the secondary that may run
+   `docker compose`:
+
+   ```
+   docker/ddns-sync.sh deploy@ns2.example.net /opt/ddns/docker
+   ```
+
+   It dumps the data on the primary and loads it on the secondary, replacing what was there. Both servers then sign
+   with the same DNSSEC key, so the DS record stays the same.
+5. Keep the secondary current by running the sync every minute from cron on the primary:
+
+   ```
+   * * * * * flock -n /tmp/ddns-sync.lock /opt/ddns/docker/ddns-sync.sh deploy@ns2.example.net /opt/ddns/docker
+   ```
+
+   Address changes then reach the secondary within a minute, and hosts expire on both servers at the same time.
+
+Run the first sync before the secondary's `NS` record goes live, as the secondary has no DNSSEC key until then.

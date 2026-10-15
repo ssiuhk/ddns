@@ -98,6 +98,16 @@ func TestRequestHandling(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Len(t, records, 2)
 
+	// every configured nameserver is announced
+	config, _, multi := buildLookup(".example.org")
+	config.Nameservers = []string{"ns1.example.net", "ns2.example.net"}
+	records, err = multi.Lookup(buildRequest("example.org.", "NS"))
+	assert.Nil(t, err)
+	if assert.Len(t, records, 2) {
+		assert.Equal(t, "ns1.example.net", records[0].Content)
+		assert.Equal(t, "ns2.example.net", records[1].Content)
+	}
+
 	// SOA and NS only exist at the apex, otherwise hosts would look like zones or delegations
 	records, err = lookup.Lookup(buildRequest("www.example.org.", "SOA"))
 	assertNone(t, records, err)

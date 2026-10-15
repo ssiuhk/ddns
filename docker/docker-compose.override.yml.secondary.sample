@@ -1,0 +1,18 @@
+# docker-compose.override.yml for a secondary nameserver, see README.
+# It only answers DNS, from data synced from the primary with ddns-sync.sh.
+services:
+  ddns:
+    environment:
+      DDNS_DOMAIN: d.example.net                      # <<< same as the primary
+      DDNS_SOA_DOMAIN: ddns.example.net               # <<< same as the primary
+      DDNS_NAMESERVERS: ddns.example.net,ns2.example.net  # <<< same as the primary
+      DDNS_REPLICA: "true"
+
+  powerdns:
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+
+  redis:
+    volumes:
+      - "./.redis_mount:/data"
