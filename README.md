@@ -1,23 +1,28 @@
 # `ddns` - Dynamic DNS
 
-A self-hosted Dynamic DNS solution similar to DynDNS or NO-IP.
+[![CircleCI](https://img.shields.io/circleci/build/github/pboehm/ddns?style=flat)](https://circleci.com/github/pboehm/ddns)
+[![Docker Image Size (tag)](https://img.shields.io/docker/image-size/pboehm/ddns/latest?logo=Docker)](https://hub.docker.com/r/pboehm/ddns)
+[![Docker Pulls](https://img.shields.io/docker/pulls/pboehm/ddns?logo=Docker)](https://hub.docker.com/r/pboehm/ddns)
+[![GitHub](https://img.shields.io/github/license/pboehm/ddns?style=flat)](https://github.com/pboehm/ddns)
 
-You can use a hosted version at [ddns.pboehm.de](https://ddns.pboehm.de/) where you can register a
-host under the `d.pboehm.de` domain (e.g `test.d.pboehm.de`).
 
-**Recent Changes**
+A self-hosted Dynamic DNS solution similar to DynDNS or NO-IP based on the
+[PowerDNS Remote Backend](https://doc.powerdns.com/md/authoritative/backend-remote/).
 
-`ddns` has been fully restructured and now uses the PowerDNS
-[Remote Backend](https://doc.powerdns.com/md/authoritative/backend-remote/) instead
-of the [Pipe Backend](https://doc.powerdns.com/md/authoritative/backend-pipe/), which
-is far easier to deploy. It now serves both the frontend and the backend over HTTP using different ports.
+<img src="screenshot.png" alt="screenshot" width="500"/>
 
-The old `ddns` source code can be found at the [legacy](https://github.com/pboehm/ddns/tree/legacy) tag.
 
-**Security Notice**
+## ⚠️⚠️⚠️ Note regarding hosted version at `ddns.pboehm.de`
 
-Please make sure that you use the latest available version of `ddns`, as it contains an important security
-fix for [an issue introduced in the rework](https://github.com/pboehm/ddns/issues/8).
+The hosted `ddns` service with custom hosts under the `d.pboehm.de` domain (e.g `test.d.pboehm.de`) is not available
+anymore! I did not use this service for quite some time and recently there were some issues which resulted in downtime
+and expiration of all registered hosts.
+
+### Alternatives
+
+There is at least one other hosted version of `pboehm/ddns` that
+[can be found via Google](https://www.google.com/search?q=pboehm%2Fddns+%22DDNS+is+a+project+that+lets+you+host+a+Dynamic+DNS+Service%2C+similar+to+DynDNS%2FNO-IP%2C+on+your+own+servers.%22)
+or you can host it yourself as described below.
 
 ## How can I update my IP if it changes?
 
