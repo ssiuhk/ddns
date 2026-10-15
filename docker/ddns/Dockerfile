@@ -7,7 +7,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -o /ddns .
 
-FROM alpine:3.22
+FROM alpine:3.24
 
 COPY --from=build /ddns /usr/local/bin/ddns
 USER nobody
