@@ -12,12 +12,14 @@ import (
 type Backend struct {
 	config *shared.Config
 	lookup *HostLookup
+	keys   shared.KeyStore
 }
 
-func NewBackend(config *shared.Config, lookup *HostLookup) *Backend {
+func NewBackend(config *shared.Config, lookup *HostLookup, keys shared.KeyStore) *Backend {
 	return &Backend{
 		config: config,
 		lookup: lookup,
+		keys:   keys,
 	}
 }
 
@@ -72,6 +74,10 @@ func (b *Backend) Run() error {
 // dispatch answers a single remote backend call. A result of false tells
 // PowerDNS that the call is unsupported or that there is nothing to return.
 func (b *Backend) dispatch(call *rpcCall) (interface{}, error) {
+	if result, handled, err := b.dispatchDNSSEC(call); handled {
+		return result, err
+	}
+
 	switch call.Method {
 	case "initialize":
 		return true, nil

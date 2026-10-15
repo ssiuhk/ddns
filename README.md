@@ -82,3 +82,30 @@ rebuilds the containers.
 ```
 docker compose --project-name ddns up -d --build
 ```
+
+### DNSSEC
+
+The zone is signed with DNSSEC by default. On its first start `ddns` creates an ECDSA P-256 (algorithm 13) signing
+key for the zone, stores it in Redis next to the hosts, and logs the DS record the parent zone needs:
+
+```
+docker compose --project-name ddns logs ddns | grep "DS record"
+```
+
+PowerDNS signs every answer on the fly and uses NSEC3 in narrow mode for denial of existence, as hosts come and go
+at any time. To complete the chain of trust, add the logged DS record for `d.example.net` to the parent zone
+`example.net` at your DNS provider. Providers that support [RFC 8078](https://www.rfc-editor.org/rfc/rfc8078) can
+pick it up automatically from the published CDS record. Until the DS record is in place, resolvers treat the zone as
+unsigned, so nothing breaks in the meantime.
+
+Make sure Redis data is persisted (the `.redis_mount` volume of the sample setup), as losing the key means the DS
+record in the parent zone no longer matches and validating resolvers will fail to resolve your hosts.
+
+The keys can also be managed with `pdnsutil` inside the PowerDNS container, for example to roll them over:
+
+```
+docker compose --project-name ddns exec powerdns pdnsutil zone show d.example.net
+```
+
+DNSSEC can be turned off with `DDNS_DNSSEC: "false"` in the `ddns` environment. Remove the DS record from the parent
+zone first, or validating resolvers will reject the then unsigned answers.

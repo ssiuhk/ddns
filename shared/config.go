@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	Verbose            bool
+	DNSSEC             bool
 	Domain             string
 	SOAFqdn            string
 	HostExpirationDays int
@@ -34,6 +35,9 @@ func (c *Config) Initialize() {
 
 	flag.IntVar(&c.HostExpirationDays, "expiration-days", 10,
 		"The number of days after a host is released when it is not updated")
+
+	flag.BoolVar(&c.DNSSEC, "dnssec", true,
+		"Sign the zone with DNSSEC, creating a key on startup if there is none")
 
 	flag.BoolVar(&c.Verbose, "verbose", false,
 		"Be more verbose")

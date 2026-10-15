@@ -1,9 +1,12 @@
 package shared
 
 import (
+	"encoding/json"
 	"errors"
-	"github.com/gomodule/redigo/redis"
+	"sort"
 	"time"
+
+	"github.com/gomodule/redigo/redis"
 )
 
 type RedisBackend struct {
@@ -77,4 +80,121 @@ func (r *RedisBackend) SetHost(host *Host) error {
 	}
 
 	return nil
+}
+
+func dnssecKeysKey(zone string) string     { return "dnssec:" + zone + ":keys" }
+func dnssecNextIDKey(zone string) string   { return "dnssec:" + zone + ":next-key-id" }
+func dnssecMetadataKey(zone string) string { return "dnssec:" + zone + ":metadata" }
+
+func (r *RedisBackend) GetDomainKeys(zone string) ([]*DomainKey, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	values, err := redis.StringMap(conn.Do("HGETALL", dnssecKeysKey(zone)))
+	if err != nil {
+		return nil, err
+	}
+
+	keys := []*DomainKey{}
+	for _, value := range values {
+		key := &DomainKey{}
+		if err := json.Unmarshal([]byte(value), key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].ID < keys[j].ID })
+
+	return keys, nil
+}
+
+func (r *RedisBackend) AddDomainKey(zone string, key *DomainKey) (int, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	id, err := redis.Int(conn.Do("INCR", dnssecNextIDKey(zone)))
+	if err != nil {
+		return -1, err
+	}
+
+	stored := *key
+	stored.ID = id
+	value, err := json.Marshal(&stored)
+	if err != nil {
+		return -1, err
+	}
+
+	if _, err := conn.Do("HSET", dnssecKeysKey(zone), id, value); err != nil {
+		return -1, err
+	}
+
+	return id, nil
+}
+
+func (r *RedisBackend) RemoveDomainKey(zone string, id int) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	_, err := conn.Do("HDEL", dnssecKeysKey(zone), id)
+	return err
+}
+
+func (r *RedisBackend) UpdateDomainKey(zone string, id int, update func(*DomainKey)) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	value, err := redis.Bytes(conn.Do("HGET", dnssecKeysKey(zone), id))
+	if err != nil {
+		return err
+	}
+
+	key := &DomainKey{}
+	if err := json.Unmarshal(value, key); err != nil {
+		return err
+	}
+	update(key)
+
+	if value, err = json.Marshal(key); err != nil {
+		return err
+	}
+	_, err = conn.Do("HSET", dnssecKeysKey(zone), id, value)
+	return err
+}
+
+func (r *RedisBackend) GetAllDomainMetadata(zone string) (map[string][]string, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	values, err := redis.StringMap(conn.Do("HGETALL", dnssecMetadataKey(zone)))
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := map[string][]string{}
+	for kind, value := range values {
+		var entries []string
+		if err := json.Unmarshal([]byte(value), &entries); err != nil {
+			return nil, err
+		}
+		metadata[kind] = entries
+	}
+
+	return metadata, nil
+}
+
+func (r *RedisBackend) SetDomainMetadata(zone, kind string, values []string) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	if len(values) == 0 {
+		_, err := conn.Do("HDEL", dnssecMetadataKey(zone), kind)
+		return err
+	}
+
+	value, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Do("HSET", dnssecMetadataKey(zone), kind, value)
+	return err
 }
