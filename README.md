@@ -33,9 +33,10 @@ An API similar to DynDNS/NO-IP has not been implemented yet.
 
 * A custom domain where the registrar allows setting `NS` records for subdomains. This is important because not all
   DNS providers support this.
-* A server with [docker](https://www.docker.com/) and [docker-compose](https://docs.docker.com/compose/) installed
+* A server with [docker](https://www.docker.com/) and the [docker compose](https://docs.docker.com/compose/) plugin installed
 * The following ports should be opened in the firewall:
   * `53/udp`
+  * `53/tcp`
   * `80/tcp`
   * `443/tcp`
 
@@ -58,11 +59,12 @@ to be made in a `docker-compose.override.yml` file
 
 #### Configuring the Setup
 
-The setup included in this repository contains all the components described above and uses
-[caddy](https://caddyserver.com/) as a web server, because it provides automatic HTTPS using Lets Encrypt.
+The setup included in this repository contains all the components described above
+([PowerDNS Authoritative Server](https://doc.powerdns.com/authoritative/) 5.1 with the remote backend, Redis and `ddns`)
+and uses [caddy](https://caddyserver.com/) 2 as a web server, because it provides automatic HTTPS using Lets Encrypt.
 
 ```
-git clone git@github.com:pboehm/ddns.git
+git clone git@github.com:ssiuhk/ddns.git
 cd ddns/docker
 cp docker-compose.override.yml.sample docker-compose.override.yml
 ```
@@ -73,10 +75,10 @@ Please adjust the settings in `docker-compose.override.yml` marked with the `#<<
 * insert your email address in lines marked with `# <<< INSERT EMAIL` which is required for getting certificates
   from Lets Encrypt
 
-Finally execute the following `docker-compose` command, which creates 4 containers in detached mode which are also
+Finally execute the following `docker compose` command, which creates 4 containers in detached mode which are also
 started automatically after reboot. For updating an existing installation use the same command because it automatically
 rebuilds the containers.
 
 ```
-docker-compose --project-name ddns up -d --build
+docker compose --project-name ddns up -d --build
 ```
