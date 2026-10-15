@@ -91,7 +91,7 @@ func TestRequestHandling(t *testing.T) {
 	}
 
 	records, err = lookup.Lookup(buildRequest("example.org.", "NS"))
-	assertSingle(t, records, err, "NS", "example.org.", "dns.example.org.")
+	assertSingle(t, records, err, "NS", "example.org.", "dns.example.org")
 
 	// the apex has both SOA and NS
 	records, err = lookup.Lookup(buildRequest("example.org.", "ANY"))

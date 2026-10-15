@@ -54,7 +54,7 @@ func (l *HostLookup) Lookup(request *Request) ([]*Response, error) {
 		records = []*Response{
 			l.record(request.QName, "SOA", fmt.Sprintf("%s. hostmaster.%s. %d 1800 3600 7200 5",
 				l.config.SOAFqdn, l.config.Zone(), l.currentSOASerial())),
-			l.record(request.QName, "NS", l.config.SOAFqdn+"."),
+			l.record(request.QName, "NS", l.config.SOAFqdn),
 		}
 	} else {
 		hostname, err := l.extractHostname(queryName)
