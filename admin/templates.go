@@ -107,13 +107,14 @@ dd { margin:0; }
   </div>
   {{if .Hosts}}
   <table>
-    <thead><tr><th>Name</th><th class="hide-sm">Type</th><th>Address</th><th class="hide-sm">Expires</th></tr></thead>
+    <thead><tr><th>Name</th><th class="hide-sm">Type</th><th>Address</th><th>Last updated</th><th class="hide-sm">Expires</th></tr></thead>
     <tbody>
     {{range .Hosts}}
       <tr>
         <td><a href="/admin/hosts/{{.Hostname}}">{{.Hostname}}</a><div class="muted mono">{{.FQDN}}</div></td>
         <td class="hide-sm">{{.Type}}</td>
         <td class="mono">{{.Ip}}</td>
+        <td{{if .UpdatedTime}} title="{{.UpdatedTime}}"{{end}}>{{.Updated}}</td>
         <td class="hide-sm">{{.Expires}}</td>
       </tr>
     {{end}}
@@ -143,6 +144,7 @@ dd { margin:0; }
   <h1>{{.Host.FQDN}}</h1>
   <dl>
     <dt>Record</dt><dd class="mono">{{.Host.Type}} {{.Host.Ip}}</dd>
+    <dt>Last updated</dt><dd>{{.Host.Updated}}{{if .Host.UpdatedTime}} <span class="muted">({{.Host.UpdatedTime}})</span>{{end}}</dd>
     <dt>Expires</dt><dd>{{.Host.Expires}}</dd>
     <dt>Token</dt><dd class="mono">{{.Host.Token}}</dd>
     <dt>Update URL</dt><dd class="mono">{{.UpdateURL}}</dd>

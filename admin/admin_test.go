@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pboehm/ddns/shared"
@@ -178,6 +179,9 @@ func TestListAndShowHosts(t *testing.T) {
 	w := c.do("GET", "/admin", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "www.d.example.org")
+	assert.Contains(t, w.Body.String(), "Last updated")
+	// hosts saved before the timestamp was tracked
+	assert.Contains(t, w.Body.String(), "<td>unknown</td>")
 	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
 
 	w = c.do("GET", "/admin/hosts/www", nil)
@@ -203,7 +207,11 @@ func TestCreateUpdateDeleteHost(t *testing.T) {
 		assert.Equal(t, "192.0.2.7", store.hosts["pi"].Ip)
 		assert.True(t, store.hosts["pi"].Persistent)
 		assert.NotEmpty(t, store.hosts["pi"].Token)
+		assert.InDelta(t, time.Now().Unix(), store.hosts["pi"].UpdatedAt, 5)
 	}
+
+	w = c.do("GET", "/admin", nil)
+	assert.Regexp(t, `title="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC">a moment ago</td>`, w.Body.String())
 
 	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"pi"}, "ip": {"192.0.2.8"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -223,9 +231,15 @@ func TestCreateUpdateDeleteHost(t *testing.T) {
 	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ip": {"not an ip"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
+	// a new token does not change the record, so it keeps its timestamp
 	oldToken := store.hosts["pi"].Token
+	store.hosts["pi"].UpdatedAt = 1700000000
 	c.do("POST", "/admin/hosts/pi/token", url.Values{"csrf": {csrf}})
 	assert.NotEqual(t, oldToken, store.hosts["pi"].Token)
+	assert.Equal(t, int64(1700000000), store.hosts["pi"].UpdatedAt)
+
+	w = c.do("GET", "/admin/hosts/pi", nil)
+	assert.Contains(t, w.Body.String(), "(2023-11-14 22:13:20 UTC)")
 
 	w = c.do("POST", "/admin/hosts/pi/delete", url.Values{"csrf": {csrf}})
 	assert.Equal(t, "/admin?msg=deleted", w.Header().Get("Location"))

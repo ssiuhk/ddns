@@ -73,6 +73,7 @@ func (f *Frontend) Run() error {
 
 		host := &shared.Host{Hostname: hostname, Ip: "127.0.0.1"}
 		host.GenerateAndSetToken()
+		host.Touch()
 
 		if err = f.hosts.SetHost(host); err != nil {
 			c.JSON(400, gin.H{"error": "Could not register host."})
@@ -119,6 +120,7 @@ func (f *Frontend) Run() error {
 		}
 
 		host.Ip = ip
+		host.Touch()
 		if err = f.hosts.SetHost(host); err != nil {
 			c.JSON(400, gin.H{
 				"error": "Could not update registered IP address",
