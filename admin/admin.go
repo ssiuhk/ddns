@@ -305,7 +305,7 @@ func (a *Admin) createHost(c *gin.Context) {
 	}
 
 	if !shared.IsValidHostname(hostname) {
-		fail("A hostname has 1 to 32 lowercase letters and digits.")
+		fail("A hostname has 1 to 63 letters, digits and hyphens, and does not start or end with a hyphen.")
 		return
 	}
 	ip, ok := parseIP(c.PostForm("ip"))

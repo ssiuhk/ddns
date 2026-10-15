@@ -92,7 +92,7 @@ dd { margin:0; }
   <form method="post" action="/admin/hosts">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <div class="row">
-      <label>Hostname<input type="text" name="hostname" value="{{.Form.Hostname}}" placeholder="myhost" pattern="[a-z0-9]{1,32}" required></label>
+      <label>Hostname<input type="text" name="hostname" value="{{.Form.Hostname}}" placeholder="myhost" required></label>
       <label>IP address<input type="text" name="ip" value="{{.Form.IP}}" placeholder="203.0.113.10 or 2001:db8::1" required></label>
       <label class="check"><input type="checkbox" name="persistent" {{if .Form.Persistent}}checked{{end}}> Never expires</label>
       <button>Create</button>

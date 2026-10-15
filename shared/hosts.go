@@ -35,7 +35,7 @@ func (h *Host) IsIPv4() bool {
 	return false
 }
 
-var hostnamePattern = regexp.MustCompile("^[a-z0-9]{1,32}$")
+var hostnamePattern = regexp.MustCompile("^([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)$")
 
 // IsValidHostname reports whether name can be registered as a host.
 func IsValidHostname(name string) bool {

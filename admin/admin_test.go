@@ -212,6 +212,9 @@ func TestCreateUpdateDeleteHost(t *testing.T) {
 	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"bad.name"}, "ip": {"192.0.2.8"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
+	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"my-nas"}, "ip": {"192.0.2.8"}})
+	assert.Equal(t, "/admin/hosts/my-nas?msg=created", w.Header().Get("Location"))
+
 	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ip": {"2001:DB8::0001"}})
 	assert.Equal(t, "/admin/hosts/pi?msg=updated", w.Header().Get("Location"))
 	assert.Equal(t, "2001:db8::1", store.hosts["pi"].Ip)
