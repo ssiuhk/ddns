@@ -109,7 +109,7 @@ const indexTemplate string = `
             <div class="header">
                 <ul class="nav nav-pills pull-right">
                     <li class="active"><a href="#">Home</a></li>
-                    <li><a href="https://github.com/pboehm/ddns">
+                    <li><a href="https://github.com/ssiuhk/ddns">
                         <i class="fa fa-github fa-lg"></i> Code</a></li>
                 </ul>
                 <h3 class="text-muted">DDNS</h3>
