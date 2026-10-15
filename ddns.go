@@ -1,11 +1,14 @@
 package main
 
 import (
+	"log"
+	"os"
+
+	"github.com/pboehm/ddns/admin"
 	"github.com/pboehm/ddns/backend"
 	"github.com/pboehm/ddns/frontend"
 	"github.com/pboehm/ddns/shared"
 	"golang.org/x/sync/errgroup"
-	"log"
 )
 
 var serviceConfig *shared.Config = &shared.Config{}
@@ -15,6 +18,10 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "set-admin-password" {
+		os.Exit(setAdminPassword(os.Args[2:]))
+	}
+
 	serviceConfig.Validate()
 
 	redis := shared.NewRedisBackend(serviceConfig)
@@ -32,7 +39,8 @@ func main() {
 	})
 
 	group.Go(func() error {
-		return frontend.NewFrontend(serviceConfig, redis).Run()
+		adminPanel := admin.New(serviceConfig, redis, frontend.ExtractRemoteAddr)
+		return frontend.NewFrontend(serviceConfig, redis, adminPanel).Run()
 	})
 
 	if err := group.Wait(); err != nil {

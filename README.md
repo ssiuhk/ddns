@@ -109,3 +109,38 @@ docker compose --project-name ddns exec powerdns pdnsutil zone show d.example.ne
 
 DNSSEC can be turned off with `DDNS_DNSSEC: "false"` in the `ddns` environment. Remove the DS record from the parent
 zone first, or validating resolvers will reject the then unsigned answers.
+
+### Admin panel
+
+`ddns` has a control panel for a single administrator at `https://ddns.example.net/admin`, where you can list, show,
+create, update and delete hosts, mark hosts that should never expire, generate new update tokens, and see the DS
+record of the zone.
+
+#### Password
+
+Set the admin password from the running container. The same command resets it, which also signs out every open admin
+session:
+
+```
+docker compose --project-name ddns exec ddns ddns set-admin-password
+```
+
+It asks for the password twice (at least 10 characters). To set it from a script, pipe it in with
+`--password-stdin`:
+
+```
+echo "$PASSWORD" | docker compose --project-name ddns exec -T ddns ddns set-admin-password --password-stdin
+```
+
+Only a bcrypt hash of the password is stored, in Redis. After 10 failed attempts from one address, logins from it are
+refused for 15 minutes.
+
+#### Sign in with Google (optional)
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials) create an OAuth client ID of type
+   "Web application" with the authorized redirect URI `https://ddns.example.net/admin/login/google/callback`.
+2. Set `DDNS_GOOGLE_CLIENT_ID`, `DDNS_GOOGLE_CLIENT_SECRET` and `DDNS_ADMIN_EMAIL` (the only Google account allowed
+   to sign in) in the `ddns` environment of `docker-compose.override.yml`, next to `DDNS_PUBLIC_URL`.
+3. Run `docker compose --project-name ddns up -d` again.
+
+The password login stays available as long as a password is set, so you can always get in from the server.

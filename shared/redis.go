@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -62,7 +63,69 @@ func (r *RedisBackend) GetHost(name string) (*Host, error) {
 		return nil, err
 	}
 
+	ttl, err := redis.Int64(conn.Do("PTTL", host.Hostname))
+	if err != nil {
+		return nil, err
+	}
+	if ttl > 0 {
+		host.ExpiresIn = time.Duration(ttl) * time.Millisecond
+	}
+
 	return &host, nil
+}
+
+// ListHosts returns all registered hosts, sorted by name.
+func (r *RedisBackend) ListHosts() ([]*Host, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	var names []string
+	cursor := 0
+	for {
+		values, err := redis.Values(conn.Do("SCAN", cursor, "COUNT", 1000))
+		if err != nil {
+			return nil, err
+		}
+
+		keys, err := redis.Strings(values[1], nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			// other keys, like the DNSSEC ones, never look like a hostname
+			if IsValidHostname(key) {
+				names = append(names, key)
+			}
+		}
+
+		if cursor, err = redis.Int(values[0], nil); err != nil {
+			return nil, err
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+	sort.Strings(names)
+
+	hosts := []*Host{}
+	for _, name := range names {
+		host, err := r.GetHost(name)
+		if err != nil {
+			// expired since the scan
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+
+	return hosts, nil
+}
+
+func (r *RedisBackend) DeleteHost(name string) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	_, err := conn.Do("DEL", name)
+	return err
 }
 
 func (r *RedisBackend) SetHost(host *Host) error {
@@ -75,11 +138,61 @@ func (r *RedisBackend) SetHost(host *Host) error {
 		return err
 	}
 
-	if _, err = conn.Do("EXPIRE", host.Hostname, r.expirationSeconds); err != nil {
-		return err
+	if host.Persistent {
+		_, err = conn.Do("PERSIST", host.Hostname)
+	} else {
+		_, err = conn.Do("EXPIRE", host.Hostname, r.expirationSeconds)
 	}
 
-	return nil
+	return err
+}
+
+const (
+	adminPasswordKey      = "admin:password-hash"
+	adminSessionSecretKey = "admin:session-secret"
+)
+
+// AdminPasswordHash returns the bcrypt hash of the admin password, or an
+// empty string when no password has been set.
+func (r *RedisBackend) AdminPasswordHash() (string, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	hash, err := redis.String(conn.Do("GET", adminPasswordKey))
+	if err == redis.ErrNil {
+		return "", nil
+	}
+	return hash, err
+}
+
+// SetAdminPasswordHash stores a new admin password hash and rotates the
+// session secret, which signs out every existing admin session.
+func (r *RedisBackend) SetAdminPasswordHash(hash string) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	if _, err := conn.Do("SET", adminPasswordKey, hash); err != nil {
+		return err
+	}
+	_, err := conn.Do("DEL", adminSessionSecretKey)
+	return err
+}
+
+// AdminSessionSecret returns the key admin session cookies are signed with,
+// creating it on first use.
+func (r *RedisBackend) AdminSessionSecret() ([]byte, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, err
+	}
+	if _, err := conn.Do("SET", adminSessionSecretKey, secret, "NX"); err != nil {
+		return nil, err
+	}
+
+	return redis.Bytes(conn.Do("GET", adminSessionSecretKey))
 }
 
 func dnssecKeysKey(zone string) string     { return "dnssec:" + zone + ":keys" }

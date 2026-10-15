@@ -3,14 +3,20 @@ package shared
 import (
 	"crypto/sha1"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
 
 type Host struct {
-	Hostname string `redis:"-"`
-	Ip       string `redis:"ip"`
-	Token    string `redis:"token"`
+	Hostname   string `redis:"-"`
+	Ip         string `redis:"ip"`
+	Token      string `redis:"token"`
+	Persistent bool   `redis:"persistent"`
+
+	// ExpiresIn is how long the host is kept without an update; zero for
+	// persistent hosts. It is only filled in when reading hosts.
+	ExpiresIn time.Duration `redis:"-"`
 }
 
 func (h *Host) GenerateAndSetToken() {
@@ -29,8 +35,24 @@ func (h *Host) IsIPv4() bool {
 	return false
 }
 
+var hostnamePattern = regexp.MustCompile("^[a-z0-9]{1,32}$")
+
+// IsValidHostname reports whether name can be registered as a host.
+func IsValidHostname(name string) bool {
+	return hostnamePattern.MatchString(name)
+}
+
 type HostBackend interface {
 	GetHost(string) (*Host, error)
 
 	SetHost(*Host) error
+}
+
+// HostManager is a HostBackend that can also enumerate and remove hosts.
+type HostManager interface {
+	HostBackend
+
+	ListHosts() ([]*Host, error)
+
+	DeleteHost(string) error
 }
