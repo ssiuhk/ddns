@@ -4,3 +4,4 @@
 dump.rdb
 /docker/.caddy_mount/
 /docker/.redis_mount/
+/docker/.backups/
