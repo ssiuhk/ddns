@@ -106,6 +106,8 @@ func loadData(args []string) int {
 	return 0
 }
 
+const backupRetry = time.Minute
+
 // backupData takes a compressed backup into a directory every interval and
 // deletes backups older than the retention. It runs as its own service.
 func backupData(args []string) int {
@@ -149,10 +151,12 @@ func backupData(args []string) int {
 	}
 
 	for {
+		wait := *interval
 		if err := run(); err != nil {
-			// keep going, the next run may succeed (e.g. Redis restarting)
-			log.Print(err)
+			// retry soon, e.g. while Redis is starting, instead of skipping a day
+			log.Printf("%v, retrying in %s", err, backupRetry)
+			wait = backupRetry
 		}
-		time.Sleep(*interval)
+		time.Sleep(wait)
 	}
 }
