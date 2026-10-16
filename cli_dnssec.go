@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/miekg/dns"
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 )
 
 const dnssecUsage = `Usage: ddns dnssec <command> [flags]

@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 )
 
 func redisFlag(flags *flag.FlagSet) *string {

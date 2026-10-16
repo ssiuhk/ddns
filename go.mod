@@ -1,4 +1,4 @@
-module github.com/pboehm/ddns
+module github.com/ssiuhk/ddns
 
 go 1.26.0
 

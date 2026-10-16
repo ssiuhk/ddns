@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pboehm/ddns/admin"
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/admin"
+	"github.com/ssiuhk/ddns/shared"
 	"golang.org/x/term"
 )
 

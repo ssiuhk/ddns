@@ -1,8 +1,7 @@
 # `ddns` - Dynamic DNS
 
-[![CircleCI](https://img.shields.io/circleci/build/github/pboehm/ddns?style=flat)](https://circleci.com/github/pboehm/ddns)
-[![Docker Image Size (tag)](https://img.shields.io/docker/image-size/pboehm/ddns/latest?logo=Docker)](https://hub.docker.com/r/pboehm/ddns)
-[![Docker Pulls](https://img.shields.io/docker/pulls/pboehm/ddns?logo=Docker)](https://hub.docker.com/r/pboehm/ddns)
+[![CI](https://github.com/ssiuhk/ddns/actions/workflows/ci.yml/badge.svg)](https://github.com/ssiuhk/ddns/actions/workflows/ci.yml)
+[![Container image](https://img.shields.io/badge/image-ghcr.io%2Fssiuhk%2Fddns-blue?logo=docker)](https://github.com/ssiuhk/ddns/pkgs/container/ddns)
 [![GitHub](https://img.shields.io/github/license/ssiuhk/ddns?style=flat)](https://github.com/ssiuhk/ddns)
 
 
@@ -126,6 +125,11 @@ rebuilds the containers.
 ```
 docker compose --project-name ddns up -d --build
 ```
+
+Instead of building locally, you can use the images that CI publishes for every change on `master`, for amd64 and
+arm64: set `image: ghcr.io/ssiuhk/ddns:latest` for the `ddns` and `backup` services and
+`image: ghcr.io/ssiuhk/ddns-powerdns:latest` for `powerdns` in `docker-compose.override.yml`, then run
+`docker compose --project-name ddns pull` followed by `docker compose --project-name ddns up -d`.
 
 ### DNSSEC
 
