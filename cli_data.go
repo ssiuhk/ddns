@@ -81,13 +81,22 @@ func loadData(args []string) int {
 	flags := flag.NewFlagSet("load", flag.ExitOnError)
 	redisHost := redisFlag(flags)
 	passphraseFile := passphraseFlag(flags)
-	input := flags.String("input", "-", "File to read from, - for stdin")
+	input := flags.String("input", "-", "File to read from, - for stdin; a directory loads the newest backup in it")
 	allowEmpty := flags.Bool("allow-empty", false, "Allow loading a dump without any data, which deletes everything")
 	flags.Parse(args)
 
 	var r io.Reader = os.Stdin
 	if *input != "-" {
-		file, err := os.Open(*input)
+		path := *input
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			if path, err = shared.LatestBackup(path); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			fmt.Fprintln(os.Stderr, "Loading", path)
+		}
+
+		file, err := os.Open(path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1

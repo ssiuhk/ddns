@@ -208,10 +208,18 @@ The password login stays available as long as a password is set, so you can alwa
 
 The `backup` service takes a compressed backup of all `ddns` data (hosts, DNSSEC keys and the admin password) every
 day into `docker/.backups` and deletes backups older than 180 days. It runs on every server, including secondaries.
-To restore a backup:
+The backup files belong to root; work with them through the `backup` service, which has the directory mounted at
+`/backups`. To restore the newest backup, or a given one:
 
 ```
-docker compose --project-name ddns exec -T ddns ddns load < .backups/ddns-backup-<time>.json.gz.age
+docker compose --project-name ddns exec backup ddns load --input /backups
+docker compose --project-name ddns exec backup ddns load --input /backups/ddns-backup-<time>.json.gz.age
+```
+
+To take a backup right away, for example before an upgrade:
+
+```
+docker compose --project-name ddns exec backup ddns backup --once
 ```
 
 #### Encryption
