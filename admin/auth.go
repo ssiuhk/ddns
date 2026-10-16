@@ -10,7 +10,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -165,51 +164,6 @@ func (a *Admin) checkPassword(password string) (bool, error) {
 func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(hash), err
-}
-
-// loginLimiter slows down password guessing by refusing further attempts
-// from an address after too many failures.
-type loginLimiter struct {
-	mu       sync.Mutex
-	failures map[string][]time.Time
-}
-
-func newLoginLimiter() *loginLimiter {
-	return &loginLimiter{failures: map[string][]time.Time{}}
-}
-
-func (l *loginLimiter) recent(address string, now time.Time) []time.Time {
-	var recent []time.Time
-	for _, t := range l.failures[address] {
-		if now.Sub(t) < failedLoginsWindow {
-			recent = append(recent, t)
-		}
-	}
-	if len(recent) == 0 {
-		delete(l.failures, address)
-	} else {
-		l.failures[address] = recent
-	}
-	return recent
-}
-
-func (l *loginLimiter) Allowed(address string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.recent(address, time.Now())) < maxFailedLogins
-}
-
-func (l *loginLimiter) Failed(address string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-	l.failures[address] = append(l.recent(address, now), now)
-}
-
-func (l *loginLimiter) Succeeded(address string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.failures, address)
 }
 
 func (a *Admin) oauthConfig() *oauth2.Config {

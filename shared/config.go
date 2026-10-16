@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,11 @@ type Config struct {
 	RedisHost          string
 	Nameservers        []string
 	Replica            bool
+
+	// Registration is "open" to let anyone register a host on the
+	// frontend, or "closed" to leave it to the admin panel.
+	Registration         string
+	RegistrationsPerHour int
 
 	nameserverList string
 
@@ -53,6 +59,12 @@ func (c *Config) Initialize() {
 
 	flag.BoolVar(&c.Replica, "replica", os.Getenv("DDNS_REPLICA") == "true",
 		"Run as a secondary server: only serve DNS from data synced from the primary (env DDNS_REPLICA)")
+
+	flag.StringVar(&c.Registration, "registration", envOr("DDNS_REGISTRATION", "open"),
+		"open: anyone can register hosts on the frontend; closed: only the admin panel creates hosts (env DDNS_REGISTRATION)")
+
+	flag.IntVar(&c.RegistrationsPerHour, "registrations-per-hour", envInt("DDNS_REGISTRATIONS_PER_HOUR", 5),
+		"How many hosts one address may register per hour, 0 for no limit (env DDNS_REGISTRATIONS_PER_HOUR)")
 
 	flag.BoolVar(&c.DNSSEC, "dnssec", true,
 		"Sign the zone with DNSSEC, creating a key on startup if there is none")
@@ -90,6 +102,10 @@ func (c *Config) Validate() {
 		log.Fatal("You have to supply the server FQDN via --soa_fqdn=FQDN")
 	}
 
+	if c.Registration != "open" && c.Registration != "closed" {
+		log.Fatal("--registration has to be open or closed")
+	}
+
 	c.Nameservers = nil
 	for _, ns := range strings.Split(c.nameserverList, ",") {
 		if ns = NormalizeName(strings.TrimSpace(ns)); ns != "" {
@@ -115,6 +131,25 @@ func (c *Config) Validate() {
 // GoogleLoginEnabled reports whether signing in with Google is configured.
 func (c *Config) GoogleLoginEnabled() bool {
 	return c.GoogleClientID != "" && c.GoogleClientSecret != ""
+}
+
+// RegistrationOpen reports whether anyone may register hosts on the frontend.
+func (c *Config) RegistrationOpen() bool {
+	return c.Registration == "open"
+}
+
+func envOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func envInt(name string, fallback int) int {
+	if value, err := strconv.Atoi(os.Getenv(name)); err == nil {
+		return value
+	}
+	return fallback
 }
 
 // RedisHostDefault is the Redis address from DDNS_REDIS_HOST, or the local default.

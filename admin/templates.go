@@ -147,6 +147,7 @@ dd { margin:0; }
     <dt>Last updated</dt><dd>{{.Host.Updated}}{{if .Host.UpdatedTime}} <span class="muted">({{.Host.UpdatedTime}})</span>{{end}}</dd>
     <dt>Expires</dt><dd>{{.Host.Expires}}</dd>
     <dt>Token</dt><dd class="mono">{{.Host.Token}}</dd>
+    <dt>Update</dt><dd class="mono">{{.UpdateCommand}}</dd>
     <dt>Update URL</dt><dd class="mono">{{.UpdateURL}}</dd>
   </dl>
 </div>

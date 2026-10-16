@@ -30,6 +30,16 @@ or you can host it yourself as described below.
 an URL periodically through `curl`. Hosts that haven't been updated for 10 days will
 be automatically removed. This can be configured in your own instance.
 
+Registering a host returns a token. Send it in a header, which keeps it out of access logs:
+
+```
+curl -H "Authorization: Bearer <token>" https://ddns.example.net/update/<hostname>
+```
+
+The older form with the token in the URL, `https://ddns.example.net/update/<hostname>/<token>`, keeps
+working for existing clients. Tokens are 256 bit random values; hosts registered before this change keep their
+old, weaker token until you generate a new one in the admin panel.
+
 An API similar to DynDNS/NO-IP has not been implemented yet.
 
 ## Self-Hosting
@@ -79,6 +89,10 @@ Please adjust the settings in `docker-compose.override.yml` marked with the `#<<
 * adjust the domain part in lines marked with `# <<< ADJUST DOMAIN` according to your DNS-Setup
 * insert your email address in lines marked with `# <<< INSERT EMAIL` which is required for getting certificates
   from Lets Encrypt
+
+By default anyone can register a host on the start page, at most 5 per address and hour. Set
+`DDNS_REGISTRATION: closed` to only create hosts in the [admin panel](#admin-panel), or change the limit with
+`DDNS_REGISTRATIONS_PER_HOUR` (0 for no limit).
 
 Finally execute the following `docker compose` command, which creates 4 containers in detached mode which are also
 started automatically after reboot. For updating an existing installation use the same command because it automatically

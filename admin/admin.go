@@ -28,11 +28,11 @@ type Admin struct {
 	config     *shared.Config
 	store      Store
 	remoteAddr func(*http.Request) (string, error)
-	limiter    *loginLimiter
+	limiter    *shared.RateLimiter
 }
 
 func New(config *shared.Config, store Store, remoteAddr func(*http.Request) (string, error)) *Admin {
-	return &Admin{config: config, store: store, remoteAddr: remoteAddr, limiter: newLoginLimiter()}
+	return &Admin{config: config, store: store, remoteAddr: remoteAddr, limiter: shared.NewRateLimiter(maxFailedLogins, failedLoginsWindow)}
 }
 
 // messages are the notices that can be shown after a redirect, by key, so
@@ -137,7 +137,7 @@ func (a *Admin) renderLogin(c *gin.Context, status int, loginError string) {
 func (a *Admin) passwordLogin(c *gin.Context) {
 	address, _ := a.remoteAddr(c.Request)
 
-	if !a.limiter.Allowed(address) {
+	if !a.limiter.Allow(address) {
 		a.renderLogin(c, http.StatusTooManyRequests, "Too many failed attempts, please wait a few minutes.")
 		return
 	}
@@ -147,13 +147,13 @@ func (a *Admin) passwordLogin(c *gin.Context) {
 		log.Printf("Could not check the admin password: %v", err)
 	}
 	if !ok {
-		a.limiter.Failed(address)
+		a.limiter.Add(address)
 		log.Printf("Failed admin login from %s", address)
 		a.renderLogin(c, http.StatusUnauthorized, "The password is not correct.")
 		return
 	}
 
-	a.limiter.Succeeded(address)
+	a.limiter.Reset(address)
 	a.signIn(c, "password")
 }
 
@@ -364,16 +364,16 @@ func (a *Admin) showHost(c *gin.Context) {
 }
 
 func (a *Admin) renderHost(c *gin.Context, status int, host *shared.Host, formError string) {
-	updateURL := fmt.Sprintf("/update/%s/%s", host.Hostname, host.Token)
-	if a.config.PublicURL != "" {
-		updateURL = a.config.PublicURL + updateURL
-	}
+	base := a.config.PublicURL + "/update/" + host.Hostname
+	updateURL := base + "/" + host.Token
+	updateCommand := fmt.Sprintf(`curl -H "Authorization: Bearer %s" "%s"`, host.Token, base)
 
 	a.render(c, status, "host.html", gin.H{
-		"Title":     host.Hostname,
-		"Host":      a.view(host),
-		"UpdateURL": updateURL,
-		"FormError": formError,
+		"Title":         host.Hostname,
+		"Host":          a.view(host),
+		"UpdateURL":     updateURL,
+		"UpdateCommand": updateCommand,
+		"FormError":     formError,
 	})
 }
 

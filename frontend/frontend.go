@@ -9,23 +9,32 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
+	"time"
 )
 
 type Frontend struct {
-	config *shared.Config
-	hosts  shared.HostBackend
-	admin  *admin.Admin
+	config        *shared.Config
+	hosts         shared.HostBackend
+	admin         *admin.Admin
+	registrations *shared.RateLimiter
 }
 
 func NewFrontend(config *shared.Config, hosts shared.HostBackend, adminPanel *admin.Admin) *Frontend {
 	return &Frontend{
-		config: config,
-		hosts:  hosts,
-		admin:  adminPanel,
+		config:        config,
+		hosts:         hosts,
+		admin:         adminPanel,
+		registrations: shared.NewRateLimiter(config.RegistrationsPerHour, time.Hour),
 	}
 }
 
 func (f *Frontend) Run() error {
+	return f.Router().Run(f.config.ListenFrontend)
+}
+
+// Router builds the HTTP handler of the frontend.
+func (f *Frontend) Router() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -40,7 +49,10 @@ func (f *Frontend) Run() error {
 	}
 
 	r.GET("/", func(g *gin.Context) {
-		g.HTML(200, "index.html", gin.H{"domain": f.config.Domain})
+		g.HTML(200, "index.html", gin.H{
+			"domain":           f.config.Domain,
+			"registrationOpen": f.config.RegistrationOpen(),
+		})
 	})
 
 	r.GET("/available/:hostname", func(c *gin.Context) {
@@ -52,88 +64,116 @@ func (f *Frontend) Run() error {
 		}
 
 		c.JSON(200, gin.H{
-			"available": valid,
+			"available": valid && f.config.RegistrationOpen(),
 		})
 	})
 
-	r.GET("/new/:hostname", func(c *gin.Context) {
-		hostname, valid := isValidHostname(c.Params.ByName("hostname"))
+	r.GET("/new/:hostname", f.register)
 
-		if !valid {
-			c.JSON(404, gin.H{"error": "This hostname is not valid"})
-			return
-		}
-
-		var err error
-
-		if _, err := f.hosts.GetHost(hostname); err == nil {
-			c.JSON(403, gin.H{"error": "This hostname has already been registered."})
-			return
-		}
-
-		host := &shared.Host{Hostname: hostname, Ip: "127.0.0.1"}
-		host.GenerateAndSetToken()
-		host.Touch()
-
-		if err = f.hosts.SetHost(host); err != nil {
-			c.JSON(400, gin.H{"error": "Could not register host."})
-			return
-		}
-
-		c.JSON(200, gin.H{
-			"hostname":    host.Hostname,
-			"token":       host.Token,
-			"update_link": fmt.Sprintf("/update/%s/%s", host.Hostname, host.Token),
-		})
-	})
-
+	// the token in the path is kept for existing clients; the header keeps it
+	// out of access logs
 	r.GET("/update/:hostname/:token", func(c *gin.Context) {
-		hostname, valid := isValidHostname(c.Params.ByName("hostname"))
-		token := c.Params.ByName("token")
-
-		if !valid {
-			c.JSON(404, gin.H{"error": "This hostname is not valid"})
+		f.update(c, c.Params.ByName("token"))
+	})
+	r.GET("/update/:hostname", func(c *gin.Context) {
+		token, found := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if !found {
+			c.JSON(401, gin.H{"error": "Send the token as an Authorization: Bearer header"})
 			return
 		}
-
-		host, err := f.hosts.GetHost(hostname)
-		if err != nil {
-			c.JSON(404, gin.H{
-				"error": "This hostname has not been registered or is expired.",
-			})
-			return
-		}
-
-		if host.Token != token {
-			c.JSON(403, gin.H{
-				"error": "You have supplied the wrong token to manipulate this host",
-			})
-			return
-		}
-
-		ip, err := ExtractRemoteAddr(c.Request)
-		if err != nil {
-			c.JSON(400, gin.H{
-				"error": "Your sender IP address is not in the right format",
-			})
-			return
-		}
-
-		host.Ip = ip
-		host.Touch()
-		if err = f.hosts.SetHost(host); err != nil {
-			c.JSON(400, gin.H{
-				"error": "Could not update registered IP address",
-			})
-		}
-
-		c.JSON(200, gin.H{
-			"current_ip": ip,
-			"status":     "Successfuly updated",
-		})
+		f.update(c, strings.TrimSpace(token))
 	})
 
-	return r.Run(f.config.ListenFrontend)
+	return r
+}
+
+func (f *Frontend) register(c *gin.Context) {
+	if !f.config.RegistrationOpen() {
+		c.JSON(403, gin.H{"error": "Registration is closed, ask the administrator to create the host."})
+		return
+	}
+
+	hostname, valid := isValidHostname(c.Params.ByName("hostname"))
+	if !valid {
+		c.JSON(404, gin.H{"error": "This hostname is not valid"})
+		return
+	}
+
+	address, err := ExtractRemoteAddr(c.Request)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Your sender IP address is not in the right format"})
+		return
+	}
+	if !f.registrations.Allow(address) {
+		c.JSON(429, gin.H{"error": "Too many hosts registered from your address, please try again later."})
+		return
+	}
+
+	if _, err := f.hosts.GetHost(hostname); err == nil {
+		c.JSON(403, gin.H{"error": "This hostname has already been registered."})
+		return
+	}
+
+	host := &shared.Host{Hostname: hostname, Ip: "127.0.0.1"}
+	host.GenerateAndSetToken()
+	host.Touch()
+
+	if err = f.hosts.SetHost(host); err != nil {
+		c.JSON(400, gin.H{"error": "Could not register host."})
+		return
+	}
+	f.registrations.Add(address)
+
+	c.JSON(200, gin.H{
+		"hostname":    host.Hostname,
+		"token":       host.Token,
+		"update_link": fmt.Sprintf("/update/%s/%s", host.Hostname, host.Token),
+	})
+}
+
+func (f *Frontend) update(c *gin.Context, token string) {
+	hostname, valid := isValidHostname(c.Params.ByName("hostname"))
+	if !valid {
+		c.JSON(404, gin.H{"error": "This hostname is not valid"})
+		return
+	}
+
+	host, err := f.hosts.GetHost(hostname)
+	if err != nil {
+		c.JSON(404, gin.H{
+			"error": "This hostname has not been registered or is expired.",
+		})
+		return
+	}
+
+	if !host.HasToken(token) {
+		c.JSON(403, gin.H{
+			"error": "You have supplied the wrong token to manipulate this host",
+		})
+		return
+	}
+
+	ip, err := ExtractRemoteAddr(c.Request)
+	if err != nil {
+		c.JSON(400, gin.H{
+			"error": "Your sender IP address is not in the right format",
+		})
+		return
+	}
+
+	host.Ip = ip
+	host.Touch()
+	if err = f.hosts.SetHost(host); err != nil {
+		c.JSON(400, gin.H{
+			"error": "Could not update registered IP address",
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"current_ip": ip,
+		"status":     "Successfuly updated",
+	})
 }
 
 // ExtractRemoteAddr gets the Remote Address of the client. At First we try to get the
