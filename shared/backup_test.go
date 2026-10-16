@@ -36,6 +36,12 @@ func TestBackupsAreWrittenAndPruned(t *testing.T) {
 		assert.Nil(t, err, path)
 	}
 
+	newest, err := LatestBackup(dir)
+	assert.Nil(t, err)
+	assert.Equal(t, latest, newest)
+	_, err = LatestBackup(t.TempDir())
+	assert.NotNil(t, err)
+
 	// backups read back to the same data
 	file, err := os.Open(latest)
 	assert.Nil(t, err)

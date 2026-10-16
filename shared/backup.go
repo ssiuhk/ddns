@@ -70,3 +70,24 @@ func PruneBackups(dir string, maxAge time.Duration, now time.Time) ([]string, er
 
 	return deleted, nil
 }
+
+// LatestBackup returns the path of the newest backup in dir.
+func LatestBackup(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+
+	latest := ""
+	for _, entry := range entries {
+		name := entry.Name()
+		// the timestamp in the name sorts in time order
+		if !entry.IsDir() && strings.HasPrefix(name, backupPrefix) && strings.Contains(name, backupSuffix) && name > latest {
+			latest = name
+		}
+	}
+	if latest == "" {
+		return "", fmt.Errorf("there is no backup in %s", dir)
+	}
+	return filepath.Join(dir, latest), nil
+}

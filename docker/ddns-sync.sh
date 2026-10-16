@@ -7,6 +7,7 @@
 #   docker/ddns-sync.sh [user@]secondary [ddns docker directory on the secondary]
 #
 # The SSH user on the secondary needs to be allowed to run docker compose.
+# Both ends run in the backup service, which holds the backup settings.
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
@@ -19,6 +20,6 @@ remote_dir=${2:-ddns/docker}
 
 cd "$(dirname "$0")"
 
-docker compose --project-name ddns exec -T ddns ddns dump --gzip \
+docker compose --project-name ddns exec -T backup ddns dump --gzip \
     | ssh -o BatchMode=yes "$target" \
-        "cd '$remote_dir' && docker compose --project-name ddns exec -T ddns ddns load"
+        "cd '$remote_dir' && docker compose --project-name ddns exec -T backup ddns load"
