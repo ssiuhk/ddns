@@ -93,7 +93,8 @@ dd { margin:0; }
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <div class="row">
       <label>Hostname<input type="text" name="hostname" value="{{.Form.Hostname}}" placeholder="myhost" required></label>
-      <label>IP address<input type="text" name="ip" value="{{.Form.IP}}" placeholder="203.0.113.10 or 2001:db8::1" required></label>
+      <label>IPv4 address<input type="text" name="ipv4" value="{{.Form.IPv4}}" placeholder="203.0.113.10"></label>
+      <label>IPv6 address<input type="text" name="ipv6" value="{{.Form.IPv6}}" placeholder="2001:db8::1"></label>
       <label class="check"><input type="checkbox" name="persistent" {{if .Form.Persistent}}checked{{end}}> Never expires</label>
       <button>Create</button>
     </div>
@@ -113,7 +114,7 @@ dd { margin:0; }
       <tr>
         <td><a href="/admin/hosts/{{.Hostname}}">{{.Hostname}}</a><div class="muted mono">{{.FQDN}}</div></td>
         <td class="hide-sm">{{.Type}}</td>
-        <td class="mono">{{.Ip}}</td>
+        <td class="mono">{{range .Addresses}}<div>{{.}}</div>{{end}}</td>
         <td{{if .UpdatedTime}} title="{{.UpdatedTime}}"{{end}}>{{.Updated}}</td>
         <td class="hide-sm">{{.Expires}}</td>
       </tr>
@@ -143,7 +144,8 @@ dd { margin:0; }
 <div class="card">
   <h1>{{.Host.FQDN}}</h1>
   <dl>
-    <dt>Record</dt><dd class="mono">{{.Host.Type}} {{.Host.Ip}}</dd>
+    {{if .Host.IPv4}}<dt>A record</dt><dd class="mono">{{.Host.IPv4}}</dd>{{end}}
+    {{if .Host.IPv6}}<dt>AAAA record</dt><dd class="mono">{{.Host.IPv6}}</dd>{{end}}
     <dt>Last updated</dt><dd>{{.Host.Updated}}{{if .Host.UpdatedTime}} <span class="muted">({{.Host.UpdatedTime}})</span>{{end}}</dd>
     <dt>Expires</dt><dd>{{.Host.Expires}}</dd>
     <dt>Token</dt><dd class="mono">{{.Host.Token}}</dd>
@@ -158,7 +160,8 @@ dd { margin:0; }
   <form method="post" action="/admin/hosts/{{.Host.Hostname}}">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <div class="row">
-      <label>IP address<input type="text" name="ip" value="{{.Host.Ip}}" required></label>
+      <label>IPv4 address<input type="text" name="ipv4" value="{{.Host.IPv4}}" placeholder="none"></label>
+      <label>IPv6 address<input type="text" name="ipv6" value="{{.Host.IPv6}}" placeholder="none"></label>
       <label class="check"><input type="checkbox" name="persistent" {{if .Host.Persistent}}checked{{end}}> Never expires</label>
       <button>Save</button>
     </div>

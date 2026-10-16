@@ -69,11 +69,12 @@ func (l *HostLookup) Lookup(request *Request) ([]*Response, error) {
 			return nil, err
 		}
 
-		recordType := "A"
-		if !host.IsIPv4() {
-			recordType = "AAAA"
+		if host.IPv4 != "" {
+			records = append(records, l.record(request.QName, "A", host.IPv4))
 		}
-		records = []*Response{l.record(request.QName, recordType, host.Ip)}
+		if host.IPv6 != "" {
+			records = append(records, l.record(request.QName, "AAAA", host.IPv6))
+		}
 	}
 
 	if request.QType == "ANY" {

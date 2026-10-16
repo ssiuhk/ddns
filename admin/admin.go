@@ -5,7 +5,6 @@ package admin
 import (
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -217,10 +216,14 @@ type hostView struct {
 }
 
 func (a *Admin) view(host *shared.Host) *hostView {
-	recordType := "A"
-	if !host.IsIPv4() {
-		recordType = "AAAA"
+	var types []string
+	if host.IPv4 != "" {
+		types = append(types, "A")
 	}
+	if host.IPv6 != "" {
+		types = append(types, "AAAA")
+	}
+	recordType := strings.Join(types, ", ")
 
 	expires := "never"
 	if !host.Persistent {
@@ -263,7 +266,7 @@ func (a *Admin) listHosts(c *gin.Context) {
 	filter := strings.ToLower(strings.TrimSpace(c.Query("q")))
 	var views []*hostView
 	for _, host := range hosts {
-		if filter == "" || strings.Contains(host.Hostname, filter) || strings.Contains(host.Ip, filter) {
+		if filter == "" || strings.Contains(host.Hostname, filter) || strings.Contains(host.IPv4, filter) || strings.Contains(host.IPv6, filter) {
 			views = append(views, a.view(host))
 		}
 	}
@@ -290,21 +293,32 @@ func (a *Admin) listHosts(c *gin.Context) {
 	})
 }
 
-// parseIP returns the canonical form of an IPv4 or IPv6 address.
-func parseIP(value string) (string, bool) {
-	ip := net.ParseIP(strings.TrimSpace(value))
-	if ip == nil {
-		return "", false
+// parseAddresses reads the ipv4 and ipv6 form fields. At least one is
+// required, and each has to be an address of its family.
+func parseAddresses(c *gin.Context) (ipv4, ipv6 string, message string) {
+	if value := strings.TrimSpace(c.PostForm("ipv4")); value != "" {
+		ip, isIPv4, ok := shared.ParseIP(value)
+		if !ok || !isIPv4 {
+			return "", "", "Please enter a valid IPv4 address, like 203.0.113.10."
+		}
+		ipv4 = ip
 	}
-	if v4 := ip.To4(); v4 != nil {
-		return v4.String(), true
+	if value := strings.TrimSpace(c.PostForm("ipv6")); value != "" {
+		ip, isIPv4, ok := shared.ParseIP(value)
+		if !ok || isIPv4 {
+			return "", "", "Please enter a valid IPv6 address, like 2001:db8::1."
+		}
+		ipv6 = ip
 	}
-	return ip.String(), true
+	if ipv4 == "" && ipv6 == "" {
+		return "", "", "Please enter an IPv4 address, an IPv6 address or both."
+	}
+	return ipv4, ipv6, ""
 }
 
 func (a *Admin) createHost(c *gin.Context) {
 	hostname := strings.ToLower(strings.TrimSpace(c.PostForm("hostname")))
-	form := gin.H{"Hostname": hostname, "IP": c.PostForm("ip"), "Persistent": c.PostForm("persistent") != ""}
+	form := gin.H{"Hostname": hostname, "IPv4": c.PostForm("ipv4"), "IPv6": c.PostForm("ipv6"), "Persistent": c.PostForm("persistent") != ""}
 
 	fail := func(message string) {
 		hosts, _ := a.store.ListHosts()
@@ -321,9 +335,9 @@ func (a *Admin) createHost(c *gin.Context) {
 		fail("A hostname has 1 to 63 letters, digits and hyphens, and does not start or end with a hyphen.")
 		return
 	}
-	ip, ok := parseIP(c.PostForm("ip"))
-	if !ok {
-		fail("Please enter a valid IPv4 or IPv6 address.")
+	ipv4, ipv6, message := parseAddresses(c)
+	if message != "" {
+		fail(message)
 		return
 	}
 	if _, err := a.store.GetHost(hostname); err == nil {
@@ -331,7 +345,7 @@ func (a *Admin) createHost(c *gin.Context) {
 		return
 	}
 
-	host := &shared.Host{Hostname: hostname, Ip: ip, Persistent: form["Persistent"].(bool)}
+	host := &shared.Host{Hostname: hostname, IPv4: ipv4, IPv6: ipv6, Persistent: form["Persistent"].(bool)}
 	host.GenerateAndSetToken()
 	host.Touch()
 	if err := a.store.SetHost(host); err != nil {
@@ -383,13 +397,13 @@ func (a *Admin) updateHost(c *gin.Context) {
 		return
 	}
 
-	ip, ok := parseIP(c.PostForm("ip"))
-	if !ok {
-		a.renderHost(c, http.StatusBadRequest, host, "Please enter a valid IPv4 or IPv6 address.")
+	ipv4, ipv6, message := parseAddresses(c)
+	if message != "" {
+		a.renderHost(c, http.StatusBadRequest, host, message)
 		return
 	}
 
-	host.Ip = ip
+	host.IPv4, host.IPv6 = ipv4, ipv6
 	host.Persistent = c.PostForm("persistent") != ""
 	host.Touch()
 	if err := a.store.SetHost(host); err != nil {

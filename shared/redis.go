@@ -63,6 +63,16 @@ func (r *RedisBackend) GetHost(name string) (*Host, error) {
 		return nil, err
 	}
 
+	// hosts saved before IPv4 and IPv6 were kept apart have a single "ip"
+	if host.IPv4 == "" && host.IPv6 == "" {
+		for i := 0; i+1 < len(data); i += 2 {
+			if field, _ := redis.String(data[i], nil); field == "ip" {
+				ip, _ := redis.String(data[i+1], nil)
+				host.SetIP(ip)
+			}
+		}
+	}
+
 	ttl, err := redis.Int64(conn.Do("PTTL", host.Hostname))
 	if err != nil {
 		return nil, err
@@ -134,7 +144,10 @@ func (r *RedisBackend) SetHost(host *Host) error {
 
 	var err error
 
-	if _, err = conn.Do("HMSET", redis.Args{}.Add(host.Hostname).AddFlat(host)...); err != nil {
+	if _, err = conn.Do("HSET", redis.Args{}.Add(host.Hostname).AddFlat(host)...); err != nil {
+		return err
+	}
+	if _, err = conn.Do("HDEL", host.Hostname, "ip"); err != nil {
 		return err
 	}
 

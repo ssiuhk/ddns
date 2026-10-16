@@ -4,14 +4,18 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"net"
 	"regexp"
 	"strings"
 	"time"
 )
 
 type Host struct {
-	Hostname   string `redis:"-"`
-	Ip         string `redis:"ip"`
+	Hostname string `redis:"-"`
+	// IPv4 and IPv6 are served as the A and AAAA record of the host; either
+	// may be empty.
+	IPv4       string `redis:"ip4"`
+	IPv6       string `redis:"ip6"`
 	Token      string `redis:"token"`
 	Persistent bool   `redis:"persistent"`
 
@@ -43,12 +47,42 @@ func (h *Host) Touch() {
 	h.UpdatedAt = time.Now().Unix()
 }
 
-func (h *Host) IsIPv4() bool {
-	if strings.Contains(h.Ip, ".") {
-		return true
+// ParseIP returns the canonical form of an IPv4 or IPv6 address and
+// whether it is an IPv4 one.
+func ParseIP(value string) (ip string, isIPv4 bool, ok bool) {
+	parsed := net.ParseIP(strings.TrimSpace(value))
+	if parsed == nil {
+		return "", false, false
 	}
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.String(), true, true
+	}
+	return parsed.String(), false, true
+}
 
-	return false
+// SetIP sets the address of the family of ip, keeping the other one.
+func (h *Host) SetIP(ip string) bool {
+	canonical, isIPv4, ok := ParseIP(ip)
+	if !ok {
+		return false
+	}
+	if isIPv4 {
+		h.IPv4 = canonical
+	} else {
+		h.IPv6 = canonical
+	}
+	return true
+}
+
+// Addresses lists the addresses of the host, IPv4 first.
+func (h *Host) Addresses() []string {
+	var addresses []string
+	for _, ip := range []string{h.IPv4, h.IPv6} {
+		if ip != "" {
+			addresses = append(addresses, ip)
+		}
+	}
+	return addresses
 }
 
 var hostnamePattern = regexp.MustCompile("^([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)$")

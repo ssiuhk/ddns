@@ -24,8 +24,8 @@ func TestDumpAndLoadRoundTrip(t *testing.T) {
 	r := testRedis(t)
 
 	assert.Nil(t, r.Load(&Snapshot{Version: snapshotVersion}))
-	assert.Nil(t, r.SetHost(&Host{Hostname: "www", Ip: "10.0.0.1", Token: "abc"}))
-	assert.Nil(t, r.SetHost(&Host{Hostname: "nas", Ip: "2001:db8::1", Token: "def", Persistent: true}))
+	assert.Nil(t, r.SetHost(&Host{Hostname: "www", IPv4: "10.0.0.1", Token: "abc"}))
+	assert.Nil(t, r.SetHost(&Host{Hostname: "nas", IPv6: "2001:db8::1", Token: "def", Persistent: true}))
 	assert.Nil(t, r.SetAdminPasswordHash("hash"))
 	_, err := r.AdminSessionSecret()
 	assert.Nil(t, err)
@@ -40,7 +40,7 @@ func TestDumpAndLoadRoundTrip(t *testing.T) {
 
 	// changes made after the dump are undone by loading it
 	assert.Nil(t, r.DeleteHost("www"))
-	assert.Nil(t, r.SetHost(&Host{Hostname: "extra", Ip: "10.0.0.9"}))
+	assert.Nil(t, r.SetHost(&Host{Hostname: "extra", IPv4: "10.0.0.9"}))
 
 	read, err := ReadSnapshot(&buffer)
 	assert.Nil(t, err)

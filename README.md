@@ -40,7 +40,32 @@ The older form with the token in the URL, `https://ddns.example.net/update/<host
 working for existing clients. Tokens are 256 bit random values; hosts registered before this change keep their
 old, weaker token until you generate a new one in the admin panel.
 
-An API similar to DynDNS/NO-IP has not been implemented yet.
+A host can have an IPv4 and an IPv6 address at the same time, served as its A and AAAA record. An update
+sets the address of the family it comes from and keeps the other one. To set addresses explicitly, for example
+both at once, add `?myip=203.0.113.10,2001:db8::1` to the update URL.
+
+### Routers and ddclient (DynDNS2 protocol)
+
+`ddns` also speaks the DynDNS2 update protocol used by routers (Fritz!Box, UniFi, pfSense, OPNsense) and
+[ddclient](https://ddclient.net/). Configure a "custom" or "DynDNS2" provider with:
+
+* Server / update URL: `https://ddns.example.net/nic/update?hostname=<domain>&myip=<ipaddr>,<ip6addr>`
+  (the placeholders differ per router; leave out `myip` to use the address the request comes from)
+* Username: the hostname, for example `myhost` or `myhost.d.example.net`
+* Password: the token of the host
+
+For ddclient:
+
+```
+protocol=dyndns2
+server=ddns.example.net
+ssl=yes
+login=myhost
+password=<token>
+myhost.d.example.net
+```
+
+The answer is one line per host: `good <ip>`, `nochg <ip>`, `nohost`, `badauth` or `notfqdn`.
 
 ## Self-Hosting
 

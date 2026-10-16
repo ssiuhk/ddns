@@ -68,7 +68,7 @@ func setup(t *testing.T) (*gin.Engine, *memoryStore) {
 	gin.SetMode(gin.TestMode)
 
 	store := &memoryStore{hosts: map[string]*shared.Host{
-		"www": {Hostname: "www", Ip: "10.0.0.1", Token: "secret"},
+		"www": {Hostname: "www", IPv4: "10.0.0.1", Token: "secret"},
 	}}
 	hash, err := HashPassword(testPassword)
 	assert.Nil(t, err)
@@ -197,14 +197,14 @@ func TestCreateUpdateDeleteHost(t *testing.T) {
 	csrf := c.csrf()
 
 	// forms without the CSRF token are rejected
-	w := c.do("POST", "/admin/hosts", url.Values{"hostname": {"pi"}, "ip": {"192.0.2.7"}})
+	w := c.do("POST", "/admin/hosts", url.Values{"hostname": {"pi"}, "ipv4": {"192.0.2.7"}})
 	assert.Equal(t, "/admin?msg=bad-request", w.Header().Get("Location"))
 	assert.NotContains(t, store.hosts, "pi")
 
-	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"pi"}, "ip": {"192.0.2.7"}, "persistent": {"on"}})
+	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"pi"}, "ipv4": {"192.0.2.7"}, "persistent": {"on"}})
 	assert.Equal(t, "/admin/hosts/pi?msg=created", w.Header().Get("Location"))
 	if assert.Contains(t, store.hosts, "pi") {
-		assert.Equal(t, "192.0.2.7", store.hosts["pi"].Ip)
+		assert.Equal(t, "192.0.2.7", store.hosts["pi"].IPv4)
 		assert.True(t, store.hosts["pi"].Persistent)
 		assert.NotEmpty(t, store.hosts["pi"].Token)
 		assert.InDelta(t, time.Now().Unix(), store.hosts["pi"].UpdatedAt, 5)
@@ -213,22 +213,34 @@ func TestCreateUpdateDeleteHost(t *testing.T) {
 	w = c.do("GET", "/admin", nil)
 	assert.Regexp(t, `title="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC">a moment ago</td>`, w.Body.String())
 
-	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"pi"}, "ip": {"192.0.2.8"}})
+	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"pi"}, "ipv4": {"192.0.2.8"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "already exists")
 
-	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"bad.name"}, "ip": {"192.0.2.8"}})
+	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"bad.name"}, "ipv4": {"192.0.2.8"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"my-nas"}, "ip": {"192.0.2.8"}})
+	w = c.do("POST", "/admin/hosts", url.Values{"csrf": {csrf}, "hostname": {"my-nas"}, "ipv4": {"192.0.2.8"}})
 	assert.Equal(t, "/admin/hosts/my-nas?msg=created", w.Header().Get("Location"))
 
-	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ip": {"2001:DB8::0001"}})
+	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ipv4": {"192.0.2.9"}, "ipv6": {"2001:DB8::0001"}})
 	assert.Equal(t, "/admin/hosts/pi?msg=updated", w.Header().Get("Location"))
-	assert.Equal(t, "2001:db8::1", store.hosts["pi"].Ip)
+	assert.Equal(t, "192.0.2.9", store.hosts["pi"].IPv4)
+	assert.Equal(t, "2001:db8::1", store.hosts["pi"].IPv6)
+
+	// an empty field removes that record, but one address is required
+	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ipv6": {"2001:db8::1"}})
+	assert.Equal(t, "/admin/hosts/pi?msg=updated", w.Header().Get("Location"))
+	assert.Equal(t, "", store.hosts["pi"].IPv4)
+	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// each field only takes its own family
+	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ipv4": {"2001:db8::2"}})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.False(t, store.hosts["pi"].Persistent)
 
-	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ip": {"not an ip"}})
+	w = c.do("POST", "/admin/hosts/pi", url.Values{"csrf": {csrf}, "ipv4": {"not an ip"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// a new token does not change the record, so it keeps its timestamp

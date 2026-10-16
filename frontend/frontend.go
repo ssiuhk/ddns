@@ -1,6 +1,7 @@
 package frontend
 
 import (
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/pboehm/ddns/admin"
@@ -69,6 +70,7 @@ func (f *Frontend) Router() *gin.Engine {
 	})
 
 	r.GET("/new/:hostname", f.register)
+	r.GET("/nic/update", f.dynDNS2Update)
 
 	// the token in the path is kept for existing clients; the header keeps it
 	// out of access logs
@@ -114,7 +116,7 @@ func (f *Frontend) register(c *gin.Context) {
 		return
 	}
 
-	host := &shared.Host{Hostname: hostname, Ip: "127.0.0.1"}
+	host := &shared.Host{Hostname: hostname, IPv4: "127.0.0.1"}
 	host.GenerateAndSetToken()
 	host.Touch()
 
@@ -153,15 +155,15 @@ func (f *Frontend) update(c *gin.Context, token string) {
 		return
 	}
 
-	ip, err := ExtractRemoteAddr(c.Request)
+	addresses, err := requestedAddresses(c)
 	if err != nil {
-		c.JSON(400, gin.H{
-			"error": "Your sender IP address is not in the right format",
-		})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	host.Ip = ip
+	for _, ip := range addresses {
+		host.SetIP(ip)
+	}
 	host.Touch()
 	if err = f.hosts.SetHost(host); err != nil {
 		c.JSON(400, gin.H{
@@ -171,9 +173,48 @@ func (f *Frontend) update(c *gin.Context, token string) {
 	}
 
 	c.JSON(200, gin.H{
-		"current_ip": ip,
+		"current_ip": addresses[0],
+		"ipv4":       host.IPv4,
+		"ipv6":       host.IPv6,
 		"status":     "Successfuly updated",
 	})
+}
+
+// requestedAddresses returns the addresses a client wants to set: those in
+// the myip parameter (comma separated) and myipv6, or else the address the
+// request comes from. One IPv4 and one IPv6 address can be set at once.
+func requestedAddresses(c *gin.Context) ([]string, error) {
+	var values []string
+	for _, param := range []string{"myip", "myipv6"} {
+		for _, value := range strings.Split(c.Query(param), ",") {
+			if value = strings.TrimSpace(value); value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+
+	if len(values) == 0 {
+		ip, err := ExtractRemoteAddr(c.Request)
+		if err != nil {
+			return nil, errors.New("Your sender IP address is not in the right format")
+		}
+		values = []string{ip}
+	}
+
+	var addresses []string
+	var seenIPv4, seenIPv6 bool
+	for _, value := range values {
+		ip, isIPv4, ok := shared.ParseIP(value)
+		if !ok {
+			return nil, fmt.Errorf("%q is not an IP address", value)
+		}
+		if (isIPv4 && seenIPv4) || (!isIPv4 && seenIPv6) {
+			return nil, errors.New("Only one IPv4 and one IPv6 address can be set")
+		}
+		seenIPv4, seenIPv6 = seenIPv4 || isIPv4, seenIPv6 || !isIPv4
+		addresses = append(addresses, ip)
+	}
+	return addresses, nil
 }
 
 // ExtractRemoteAddr gets the Remote Address of the client. At First we try to get the
@@ -183,7 +224,9 @@ func ExtractRemoteAddr(req *http.Request) (string, error) {
 	header_data, ok := req.Header["X-Forwarded-For"]
 
 	if ok {
-		return header_data[0], nil
+		// the first entry is the client, any further ones are proxies
+		client, _, _ := strings.Cut(header_data[0], ",")
+		return strings.TrimSpace(client), nil
 	} else {
 		ip, _, err := net.SplitHostPort(req.RemoteAddr)
 		return ip, err

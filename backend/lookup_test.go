@@ -36,17 +36,23 @@ func buildLookup(domain string) (*shared.Config, *testHostBackend, *HostLookup) 
 		hosts: map[string]*shared.Host{
 			"www": {
 				Hostname: "www",
-				Ip:       "10.11.12.13",
+				IPv4:     "10.11.12.13",
 				Token:    "abcdef",
 			},
 			"v4": {
 				Hostname: "v4",
-				Ip:       "10.10.10.10",
+				IPv4:     "10.10.10.10",
 				Token:    "ghijkl",
+			},
+			"dual": {
+				Hostname: "dual",
+				IPv4:     "10.20.30.40",
+				IPv6:     "2001:db8::40",
+				Token:    "mnopqr",
 			},
 			"v6": {
 				Hostname: "v6",
-				Ip:       "2001:db8:85a3::8a2e:370:7334",
+				IPv6:     "2001:db8:85a3::8a2e:370:7334",
 				Token:    "ghijkl",
 			},
 		},
@@ -151,4 +157,17 @@ func TestRequestHandling(t *testing.T) {
 
 	records, err = lookup.Lookup(buildRequest("v6.example.org.", "A"))
 	assertNone(t, records, err)
+
+	// a host can have both an IPv4 and an IPv6 address
+	records, err = lookup.Lookup(buildRequest("dual.example.org.", "ANY"))
+	assert.Nil(t, err)
+	if assert.Len(t, records, 2) {
+		assert.Equal(t, "A", records[0].QType)
+		assert.Equal(t, "10.20.30.40", records[0].Content)
+		assert.Equal(t, "AAAA", records[1].QType)
+		assert.Equal(t, "2001:db8::40", records[1].Content)
+	}
+
+	records, err = lookup.Lookup(buildRequest("dual.example.org.", "AAAA"))
+	assertSingle(t, records, err, "AAAA", "dual.example.org.", "2001:db8::40")
 }
