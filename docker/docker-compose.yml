@@ -32,8 +32,9 @@ services:
     image: redis:8-alpine
 
   # Daily backup of all ddns data into ./.backups, deleting backups older
-  # than 180 days. Restore one with:
-  #   docker compose --project-name ddns exec -T ddns ddns load < .backups/<file>
+  # than 180 days. Restore the newest one with:
+  #   docker compose --project-name ddns exec backup ddns load --input /backups
+  # or a given one with --input /backups/<file>.
   # Set a passphrase in docker-compose.override.yml to encrypt them (README).
   backup:
     restart: unless-stopped
