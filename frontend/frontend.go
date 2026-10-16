@@ -69,6 +69,10 @@ func (f *Frontend) Router() *gin.Engine {
 		})
 	})
 
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(shared.Health(f.hosts, 0))
+	})
+
 	r.GET("/new/:hostname", f.register)
 	r.GET("/nic/update", f.dynDNS2Update)
 

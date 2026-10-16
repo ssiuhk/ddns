@@ -11,6 +11,11 @@ services:
       DDNS_DOMAIN: d.example.net
       DDNS_SOA_DOMAIN: ddns.example.net
       DDNS_REDIS_HOST: redis:6379
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8053/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   powerdns:
     restart: unless-stopped
@@ -29,6 +34,7 @@ services:
   # Daily backup of all ddns data into ./.backups, deleting backups older
   # than 180 days. Restore one with:
   #   docker compose --project-name ddns exec -T ddns ddns load < .backups/<file>
+  # Set a passphrase in docker-compose.override.yml to encrypt them (README).
   backup:
     restart: unless-stopped
     image: ddns:local

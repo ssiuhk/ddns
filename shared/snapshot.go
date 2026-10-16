@@ -169,13 +169,26 @@ func (r *RedisBackend) Load(snapshot *Snapshot) error {
 			conn.Send("PEXPIRE", item.Key, item.TTL)
 		}
 	}
+	conn.Send("SET", lastLoadKey, snapshot.Created.UTC().Format(time.RFC3339))
 
 	_, err = conn.Do("EXEC")
 	return err
 }
 
-// WriteSnapshot writes a snapshot as JSON, gzip compressed if compress is set.
-func WriteSnapshot(w io.Writer, snapshot *Snapshot, compress bool) error {
+// WriteSnapshot writes a snapshot as JSON, gzip compressed if compress is
+// set, and encrypted with passphrase unless it is empty.
+func WriteSnapshot(w io.Writer, snapshot *Snapshot, compress bool, passphrase string) error {
+	if passphrase != "" {
+		encrypted, err := encryptingWriter(w, passphrase)
+		if err != nil {
+			return err
+		}
+		if err := WriteSnapshot(encrypted, snapshot, compress, ""); err != nil {
+			return err
+		}
+		return encrypted.Close()
+	}
+
 	if compress {
 		gz := gzip.NewWriter(w)
 		if err := json.NewEncoder(gz).Encode(snapshot); err != nil {
@@ -186,9 +199,14 @@ func WriteSnapshot(w io.Writer, snapshot *Snapshot, compress bool) error {
 	return json.NewEncoder(w).Encode(snapshot)
 }
 
-// ReadSnapshot reads a snapshot written by WriteSnapshot, compressed or not.
-func ReadSnapshot(r io.Reader) (*Snapshot, error) {
-	buffered := bufio.NewReader(r)
+// ReadSnapshot reads a snapshot written by WriteSnapshot, compressed,
+// encrypted or not. Encrypted data needs the passphrase.
+func ReadSnapshot(r io.Reader, passphrase string) (*Snapshot, error) {
+	plain, err := decryptingReader(bufio.NewReader(r), passphrase)
+	if err != nil {
+		return nil, err
+	}
+	buffered := bufio.NewReader(plain)
 
 	var reader io.Reader = buffered
 	if magic, err := buffered.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {

@@ -23,6 +23,7 @@ func main() {
 		"dump":               dumpData,
 		"load":               loadData,
 		"backup":             backupData,
+		"dnssec":             dnssecCommand,
 	}
 	if len(os.Args) > 1 {
 		if command, ok := commands[os.Args[1]]; ok {

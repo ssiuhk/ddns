@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -36,13 +37,13 @@ func TestDumpAndLoadRoundTrip(t *testing.T) {
 	assert.Nil(t, err)
 
 	var buffer bytes.Buffer
-	assert.Nil(t, WriteSnapshot(&buffer, snapshot, true))
+	assert.Nil(t, WriteSnapshot(&buffer, snapshot, true, "secret"))
 
 	// changes made after the dump are undone by loading it
 	assert.Nil(t, r.DeleteHost("www"))
 	assert.Nil(t, r.SetHost(&Host{Hostname: "extra", IPv4: "10.0.0.9"}))
 
-	read, err := ReadSnapshot(&buffer)
+	read, err := ReadSnapshot(&buffer, "secret")
 	assert.Nil(t, err)
 	assert.Nil(t, r.Load(read))
 
@@ -70,4 +71,14 @@ func TestDumpAndLoadRoundTrip(t *testing.T) {
 	hash, err := r.AdminPasswordHash()
 	assert.Nil(t, err)
 	assert.Equal(t, "hash", hash)
+
+	// a secondary can tell how old its data is
+	loaded, err := r.LastLoad()
+	assert.Nil(t, err)
+	assert.Equal(t, snapshot.Created.Truncate(time.Second).UTC(), loaded.UTC())
+	code, body := Health(r, time.Hour)
+	assert.Equal(t, 200, code)
+	assert.Equal(t, "ok", body["status"])
+	code, _ = Health(r, time.Nanosecond)
+	assert.Equal(t, 503, code)
 }

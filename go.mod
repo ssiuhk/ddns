@@ -3,6 +3,7 @@ module github.com/pboehm/ddns
 go 1.26.0
 
 require (
+	filippo.io/age v1.3.2
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gomodule/redigo v1.9.3
 	github.com/miekg/dns v1.1.73
@@ -14,6 +15,7 @@ require (
 )
 
 require (
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect

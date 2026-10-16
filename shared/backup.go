@@ -11,13 +11,19 @@ import (
 const (
 	backupPrefix     = "ddns-backup-"
 	backupSuffix     = ".json.gz"
+	encryptedSuffix  = ".age"
 	backupTimeFormat = "20060102T150405Z"
 )
 
-// WriteBackup stores a compressed snapshot in dir and returns its path. The
-// file only appears under its final name once it is complete.
-func WriteBackup(dir string, snapshot *Snapshot, now time.Time) (string, error) {
-	path := filepath.Join(dir, backupPrefix+now.UTC().Format(backupTimeFormat)+backupSuffix)
+// WriteBackup stores a compressed snapshot in dir and returns its path,
+// encrypted with passphrase unless it is empty. The file only appears under
+// its final name once it is complete.
+func WriteBackup(dir string, snapshot *Snapshot, now time.Time, passphrase string) (string, error) {
+	name := backupPrefix + now.UTC().Format(backupTimeFormat) + backupSuffix
+	if passphrase != "" {
+		name += encryptedSuffix
+	}
+	path := filepath.Join(dir, name)
 
 	tmp, err := os.CreateTemp(dir, ".tmp-"+backupPrefix)
 	if err != nil {
@@ -25,7 +31,7 @@ func WriteBackup(dir string, snapshot *Snapshot, now time.Time) (string, error) 
 	}
 	defer os.Remove(tmp.Name())
 
-	if err := WriteSnapshot(tmp, snapshot, true); err != nil {
+	if err := WriteSnapshot(tmp, snapshot, true, passphrase); err != nil {
 		tmp.Close()
 		return "", err
 	}
@@ -52,11 +58,12 @@ func PruneBackups(dir string, maxAge time.Duration, now time.Time) ([]string, er
 	var deleted []string
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, backupPrefix) || !strings.HasSuffix(name, backupSuffix) {
+		stamp := strings.TrimSuffix(strings.TrimSuffix(name, encryptedSuffix), backupSuffix)
+		if entry.IsDir() || !strings.HasPrefix(name, backupPrefix) || stamp == strings.TrimSuffix(name, encryptedSuffix) {
 			continue
 		}
 
-		taken, err := time.Parse(backupTimeFormat, strings.TrimSuffix(strings.TrimPrefix(name, backupPrefix), backupSuffix))
+		taken, err := time.Parse(backupTimeFormat, strings.TrimPrefix(stamp, backupPrefix))
 		if err != nil || now.Sub(taken) <= maxAge {
 			continue
 		}

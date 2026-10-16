@@ -1,5 +1,10 @@
 # docker-compose.override.yml for a secondary nameserver, see README.
 # It only answers DNS, from data synced from the primary with ddns-sync.sh.
+# Encrypts backups and the data synced to a secondary, see README. Use the same
+# passphrase on every server and keep a copy elsewhere: backups cannot be
+# restored without it. Generate one with: openssl rand -base64 32
+x-backup-passphrase: &backup-passphrase ""         # <<< same as the primary
+
 services:
   ddns:
     environment:
@@ -7,11 +12,16 @@ services:
       DDNS_SOA_DOMAIN: ddns.example.net               # <<< same as the primary
       DDNS_NAMESERVERS: ddns.example.net,ns2.example.net  # <<< same as the primary
       DDNS_REPLICA: "true"
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
 
   powerdns:
     ports:
       - "53:53/udp"
       - "53:53/tcp"
+
+  backup:
+    environment:
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
 
   redis:
     volumes:

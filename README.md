@@ -145,11 +145,22 @@ unsigned, so nothing breaks in the meantime.
 Make sure Redis data is persisted (the `.redis_mount` volume of the sample setup), as losing the key means the DS
 record in the parent zone no longer matches and validating resolvers will fail to resolve your hosts.
 
-The keys can also be managed with `pdnsutil` inside the PowerDNS container, for example to roll them over:
+`ddns dnssec status` shows the keys and their DS records. To replace the signing key, for example once a year or
+if it may have leaked, run the rollover on the primary:
 
 ```
-docker compose --project-name ddns exec powerdns pdnsutil zone show d.example.net
+docker compose --project-name ddns exec ddns ddns dnssec rollover
 ```
+
+Each run does one step and says what to do before the next one:
+
+1. A new key is added and signs next to the old one. After an hour, replace the DS record at your registrar with the
+   new one it prints.
+2. Once the parent's DS TTL (usually a day) has passed, the next run checks that resolvers see the new DS record and
+   not the old one, then lets the old key stop signing.
+3. An hour later, the last run removes the old key.
+
+On a setup with a secondary, the sync carries every step over to it within a minute.
 
 DNSSEC can be turned off with `DDNS_DNSSEC: "false"` in the `ddns` environment. Remove the DS record from the parent
 zone first, or validating resolvers will reject the then unsigned answers.
@@ -196,8 +207,26 @@ day into `docker/.backups` and deletes backups older than 180 days. It runs on e
 To restore a backup:
 
 ```
-docker compose --project-name ddns exec -T ddns ddns load < .backups/ddns-backup-<time>.json.gz
+docker compose --project-name ddns exec -T ddns ddns load < .backups/ddns-backup-<time>.json.gz.age
 ```
+
+#### Encryption
+
+Backups contain the private DNSSEC key, so set a passphrase to encrypt them: fill in `x-backup-passphrase` at the top
+of `docker-compose.override.yml`, which passes it to the `ddns` and `backup` services as `DDNS_BACKUP_PASSPHRASE`.
+Generate one with `openssl rand -base64 32` and keep a copy outside the server, as backups cannot be restored without
+it. Use the same passphrase on a secondary.
+
+With a passphrase set, backups end in `.age` and dumps are encrypted as well; `ddns load` decrypts them with the
+passphrase it finds. Instead of the environment, the passphrase can come from a file: `--passphrase-file <path>` on
+the `dump`, `load` and `backup` commands, or `DDNS_BACKUP_PASSPHRASE_FILE`. Encrypted files are standard
+[age](https://age-encryption.org) files, so they can also be read without `ddns`:
+
+```
+age -d ddns-backup-<time>.json.gz.age | gunzip
+```
+
+`ddns dump --plain` writes an unencrypted dump even with a passphrase set.
 
 Loading replaces all `ddns` data in Redis in one step. `ddns dump` writes the current data to stdout, for a backup on
 demand. The Redis instance has to be dedicated to `ddns`, as hosts are stored as top level keys.
@@ -223,7 +252,9 @@ taking all updates and runs the admin panel; the secondary only answers DNS from
    ```
 
    It dumps the data on the primary and loads it on the secondary, replacing what was there. Both servers then sign
-   with the same DNSSEC key, so the DS record stays the same.
+   with the same DNSSEC key, so the DS record stays the same. With a [backup passphrase](#encryption) set, the data is
+   encrypted on the primary and decrypted on the secondary, which needs the same passphrase in its
+   `docker-compose.override.yml`.
 5. Keep the secondary current by running the sync every minute from cron on the primary:
 
    ```
@@ -233,3 +264,11 @@ taking all updates and runs the admin panel; the secondary only answers DNS from
    Address changes then reach the secondary within a minute, and hosts expire on both servers at the same time.
 
 Run the first sync before the secondary's `NS` record goes live, as the secondary has no DNSSEC key until then.
+
+### Health checks
+
+`https://ddns.example.net/healthz` answers `{"status":"ok"}` with status 200 while `ddns` can reach Redis, and 503
+otherwise, for uptime monitors. Docker checks the same on every server through the internal backend port, so
+`docker compose ps` shows `healthy`. A secondary also reports when its data was taken (`data_from`); inside the
+container, `wget -qO- "http://127.0.0.1:8053/healthz?max_age=10m"` fails when the last sync is older than 10 minutes.
+Monitor a secondary from outside with a DNS query, for example for one of your hosts.

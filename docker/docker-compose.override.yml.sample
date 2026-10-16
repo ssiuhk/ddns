@@ -1,3 +1,8 @@
+# Encrypts backups and the data synced to a secondary, see README. Use the same
+# passphrase on every server and keep a copy elsewhere: backups cannot be
+# restored without it. Generate one with: openssl rand -base64 32
+x-backup-passphrase: &backup-passphrase ""         # <<< INSERT PASSPHRASE
+
 services:
   ddns:
     environment:
@@ -5,6 +10,7 @@ services:
       DDNS_SOA_DOMAIN: ddns.example.net               # <<< ADJUST DOMAIN
       DDNS_EXPIRATION_DAYS: 10
       DDNS_PUBLIC_URL: https://ddns.example.net       # <<< ADJUST DOMAIN
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
       # "closed" leaves creating hosts to the admin panel
       DDNS_REGISTRATION: open
       DDNS_REGISTRATIONS_PER_HOUR: 5
@@ -19,6 +25,10 @@ services:
     ports:
       - "53:53/udp"
       - "53:53/tcp"
+
+  backup:
+    environment:
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
 
   redis:
     volumes:
