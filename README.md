@@ -154,11 +154,12 @@ docker compose --project-name ddns exec ddns ddns dnssec rollover
 
 Each run does one step and says what to do before the next one:
 
-1. A new key is added and signs next to the old one. After an hour, replace the DS record at your registrar with the
-   new one it prints.
-2. Once the parent's DS TTL (usually a day) has passed, the next run checks that resolvers see the new DS record and
-   not the old one, then lets the old key stop signing.
-3. An hour later, the last run removes the old key.
+1. A new key is added and signs next to the old one. After an hour, add the new DS record it prints at your registrar,
+   next to the old one or replacing it. A parent that reads CDS records adds it by itself.
+2. Once the parent's DS TTL (usually a day) has passed, the next run checks that resolvers see the new DS record, then
+   lets the old key stop signing. The old DS record may still be at the parent, which is fine.
+3. An hour later, the last run removes the old key. Then remove the old DS record at your registrar if it is still
+   there; a parent that reads CDS records removes it by itself.
 
 On a setup with a secondary, the sync carries every step over to it within a minute.
 

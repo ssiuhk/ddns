@@ -132,9 +132,11 @@ func dnssecRollover(store shared.KeyStore, zone string, force bool) int {
 
 Next:
   1. Wait at least an hour, so resolvers see the new key.
-  2. At your registrar, replace the DS record of %s with:
+  2. Add this DS record for %s at your registrar, next to the old one or
+     replacing it:
        %s
-     (or let the parent pick it up from the CDS record if it supports that)
+     A parent that reads CDS records adds it by itself, as the CDS now lists
+     both keys.
   3. Wait until the parent's DS TTL has passed since the change, usually a day,
      then run `+"`ddns dnssec rollover`"+` again.
 `, plan.New.ID, zone, plan.Old.ID, zone, formatDS(ds))
@@ -144,39 +146,45 @@ Key %d stays published for signatures still cached. Wait at least an hour,
 then run `+"`ddns dnssec rollover`"+` again to remove it.
 `, plan.Old.ID, plan.New.ID, plan.Old.ID)
 	case shared.RolloverFinish:
-		fmt.Printf("Step 3 of 3: removed key %d. The rollover to key %d is complete.\n", plan.Old.ID, plan.New.ID)
+		fmt.Printf(`Step 3 of 3: removed key %d. The rollover to key %d is complete.
+If the parent still has the DS record of key %d, remove it at your registrar;
+a parent that reads CDS records removes it by itself.
+`, plan.Old.ID, plan.New.ID, plan.Old.ID)
 	}
 	return 0
 }
 
-// checkParentDS makes sure resolvers see the DS of the new key and no
-// longer the one of the old key, before the old key stops signing.
+// checkParentDS makes sure resolvers see the DS of the new key before the
+// old key stops signing. The DS of the old key may still be there: resolvers
+// only need one DS that matches a signing key, and a parent following CDS
+// removes it only once the old key has stopped signing.
 func checkParentDS(zone string, plan *shared.RolloverPlan) error {
 	records, err := lookupDS(zone)
 	if err != nil {
 		return fmt.Errorf("could not look up the DS records of %s: %v", zone, err)
 	}
+	return checkDSRecords(records, zone, plan)
+}
 
-	has := func(key *shared.DomainKey) bool {
-		dnskey, err := key.PublicKey(zone)
-		if err != nil {
-			return false
-		}
-		for _, ds := range records {
-			if ds.KeyTag == dnskey.KeyTag() && ds.Algorithm == dnskey.Algorithm {
-				return true
-			}
-		}
-		return false
-	}
-
-	if !has(plan.New) {
+func checkDSRecords(records []*dns.DS, zone string, plan *shared.RolloverPlan) error {
+	if !hasDS(records, zone, plan.New) {
 		return fmt.Errorf("the parent zone has no DS record for the new key %d yet", plan.New.ID)
 	}
-	if has(plan.Old) {
-		return fmt.Errorf("the parent zone still has the DS record of the old key %d", plan.Old.ID)
-	}
 	return nil
+}
+
+// hasDS reports whether one of records is the DS of key.
+func hasDS(records []*dns.DS, zone string, key *shared.DomainKey) bool {
+	dnskey, err := key.PublicKey(zone)
+	if err != nil {
+		return false
+	}
+	for _, ds := range records {
+		if ds.KeyTag == dnskey.KeyTag() && ds.Algorithm == dnskey.Algorithm {
+			return true
+		}
+	}
+	return false
 }
 
 func lookupDS(zone string) ([]*dns.DS, error) {
