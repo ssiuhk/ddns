@@ -3,9 +3,12 @@ package frontend
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pboehm/ddns/shared"
@@ -26,6 +29,13 @@ func (m memoryHosts) SetHost(host *shared.Host) error {
 	copied := *host
 	m[host.Hostname] = &copied
 	return nil
+}
+
+func (m memoryHosts) CreateHost(host *shared.Host) error {
+	if _, ok := m[host.Hostname]; ok {
+		return shared.ErrHostExists
+	}
+	return m.SetHost(host)
 }
 
 func newFrontend(registration string, perHour int) (*gin.Engine, memoryHosts) {
@@ -91,6 +101,70 @@ func TestRegistrationRateLimit(t *testing.T) {
 	r, _ = newFrontend("open", 1)
 	get(r, "/new/bad.name")
 	w, _ = get(r, "/new/ok")
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// slowHosts is a store whose writes take a while, so concurrent requests
+// overlap in the handler.
+type slowHosts struct {
+	mu    sync.Mutex
+	hosts memoryHosts
+}
+
+func (s *slowHosts) GetHost(name string) (*shared.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hosts.GetHost(name)
+}
+func (s *slowHosts) SetHost(host *shared.Host) error {
+	time.Sleep(20 * time.Millisecond)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hosts.SetHost(host)
+}
+func (s *slowHosts) CreateHost(host *shared.Host) error {
+	time.Sleep(20 * time.Millisecond)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hosts.CreateHost(host)
+}
+
+func TestRegistrationRateLimitWithConcurrentRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &slowHosts{hosts: memoryHosts{}}
+	config := &shared.Config{Domain: ".d.example.org", Registration: "open", RegistrationsPerHour: 1}
+	r := NewFrontend(config, store, nil).Router()
+
+	var wg sync.WaitGroup
+	codes := make([]int, 12)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			w, _ := get(r, fmt.Sprintf("/new/host%d", i))
+			codes[i] = w.Code
+		}(i)
+	}
+	wg.Wait()
+
+	ok := 0
+	for _, code := range codes {
+		if code == http.StatusOK {
+			ok++
+		}
+	}
+	assert.Equal(t, 1, ok)
+	assert.Len(t, store.hosts, 1)
+}
+
+func TestTakenHostnameDoesNotUseQuota(t *testing.T) {
+	r, _ := newFrontend("open", 2)
+
+	w, _ := get(r, "/new/a")
+	assert.Equal(t, http.StatusOK, w.Code)
+	w, _ = get(r, "/new/a")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w, _ = get(r, "/new/b")
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

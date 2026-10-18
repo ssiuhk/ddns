@@ -25,6 +25,13 @@ func (b *testHostBackend) SetHost(host *shared.Host) error {
 	return nil
 }
 
+func (b *testHostBackend) CreateHost(host *shared.Host) error {
+	if _, ok := b.hosts[host.Hostname]; ok {
+		return shared.ErrHostExists
+	}
+	return b.SetHost(host)
+}
+
 func buildLookup(domain string) (*shared.Config, *testHostBackend, *HostLookup) {
 	config := &shared.Config{
 		Verbose: false,
