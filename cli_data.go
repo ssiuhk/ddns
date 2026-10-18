@@ -36,18 +36,14 @@ func dumpData(args []string) int {
 		return 1
 	}
 
-	var w io.Writer = os.Stdout
-	if *output != "-" {
-		file, err := os.Create(*output)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		defer file.Close()
-		w = file
+	write := func(w io.Writer) error { return shared.WriteSnapshot(w, snapshot, *compress) }
+	if *output == "-" {
+		err = write(os.Stdout)
+	} else {
+		// the dump holds tokens, the DNSSEC keys and the admin secrets
+		err = shared.WritePrivateFile(*output, write)
 	}
-
-	if err := shared.WriteSnapshot(w, snapshot, *compress); err != nil {
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "Could not write the dump:", err)
 		return 1
 	}
