@@ -132,25 +132,12 @@ func (f *Frontend) register(c *gin.Context) {
 	})
 }
 
+var errWrongToken = errors.New("wrong token")
+
 func (f *Frontend) update(c *gin.Context, token string) {
 	hostname, valid := isValidHostname(c.Params.ByName("hostname"))
 	if !valid {
 		c.JSON(404, gin.H{"error": "This hostname is not valid"})
-		return
-	}
-
-	host, err := f.hosts.GetHost(hostname)
-	if err != nil {
-		c.JSON(404, gin.H{
-			"error": "This hostname has not been registered or is expired.",
-		})
-		return
-	}
-
-	if !host.HasToken(token) {
-		c.JSON(403, gin.H{
-			"error": "You have supplied the wrong token to manipulate this host",
-		})
 		return
 	}
 
@@ -160,11 +147,28 @@ func (f *Frontend) update(c *gin.Context, token string) {
 		return
 	}
 
-	for _, ip := range addresses {
-		host.SetIP(ip)
-	}
-	host.Touch()
-	if err = f.hosts.SetHost(host); err != nil {
+	host, err := f.hosts.UpdateHost(hostname, func(host *shared.Host) error {
+		if !host.HasToken(token) {
+			return errWrongToken
+		}
+		for _, ip := range addresses {
+			host.SetIP(ip)
+		}
+		host.Touch()
+		return nil
+	})
+	switch {
+	case errors.Is(err, shared.ErrHostNotFound):
+		c.JSON(404, gin.H{
+			"error": "This hostname has not been registered or is expired.",
+		})
+		return
+	case errors.Is(err, errWrongToken):
+		c.JSON(403, gin.H{
+			"error": "You have supplied the wrong token to manipulate this host",
+		})
+		return
+	case err != nil:
 		c.JSON(400, gin.H{
 			"error": "Could not update registered IP address",
 		})

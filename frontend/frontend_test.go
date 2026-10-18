@@ -2,7 +2,6 @@ package frontend
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,13 +21,24 @@ func (m memoryHosts) GetHost(name string) (*shared.Host, error) {
 		copied := *host
 		return &copied, nil
 	}
-	return nil, errors.New("Host does not exist")
+	return nil, shared.ErrHostNotFound
 }
 
 func (m memoryHosts) SetHost(host *shared.Host) error {
 	copied := *host
 	m[host.Hostname] = &copied
 	return nil
+}
+
+func (m memoryHosts) UpdateHost(name string, update func(*shared.Host) error) (*shared.Host, error) {
+	host, err := m.GetHost(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := update(host); err != nil {
+		return nil, err
+	}
+	return host, m.SetHost(host)
 }
 
 func (m memoryHosts) CreateHost(host *shared.Host) error {
@@ -127,6 +137,12 @@ func (s *slowHosts) CreateHost(host *shared.Host) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.hosts.CreateHost(host)
+}
+
+func (s *slowHosts) UpdateHost(name string, update func(*shared.Host) error) (*shared.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hosts.UpdateHost(name, update)
 }
 
 func TestRegistrationRateLimitWithConcurrentRequests(t *testing.T) {

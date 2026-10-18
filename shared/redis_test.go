@@ -63,3 +63,41 @@ func TestCreateHostOnlyOnceWhenConcurrent(t *testing.T) {
 	}
 	assert.Equal(t, 1, created)
 }
+
+func TestConcurrentUpdatesKeepBothAddresses(t *testing.T) {
+	r := testRedis(t)
+	assert.Nil(t, r.Load(&Snapshot{Version: snapshotVersion}))
+	assert.Nil(t, r.CreateHost(&Host{Hostname: "dual", IPv4: "192.0.2.1", IPv6: "2001:db8::1", Token: "abc"}))
+
+	// both updates read the host before either writes it back
+	var read sync.WaitGroup
+	read.Add(2)
+	var wg sync.WaitGroup
+	for _, ip := range []string{"192.0.2.2", "2001:db8::2"} {
+		wg.Add(1)
+		go func(ip string) {
+			defer wg.Done()
+			first := true
+			_, err := r.UpdateHost("dual", func(host *Host) error {
+				if first {
+					first = false
+					read.Done()
+					read.Wait()
+				}
+				host.SetIP(ip)
+				return nil
+			})
+			assert.Nil(t, err)
+		}(ip)
+	}
+	wg.Wait()
+
+	host, err := r.GetHost("dual")
+	if assert.Nil(t, err) {
+		assert.Equal(t, "192.0.2.2", host.IPv4)
+		assert.Equal(t, "2001:db8::2", host.IPv6)
+	}
+
+	_, err = r.UpdateHost("missing", func(*Host) error { return nil })
+	assert.ErrorIs(t, err, ErrHostNotFound)
+}

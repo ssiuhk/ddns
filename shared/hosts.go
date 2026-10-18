@@ -93,8 +93,12 @@ func IsValidHostname(name string) bool {
 	return hostnamePattern.MatchString(name)
 }
 
-// ErrHostExists is returned by CreateHost when the name is taken.
-var ErrHostExists = errors.New("Host already exists")
+var (
+	// ErrHostExists is returned by CreateHost when the name is taken.
+	ErrHostExists = errors.New("Host already exists")
+	// ErrHostNotFound is returned for a host that does not exist.
+	ErrHostNotFound = errors.New("Host does not exist")
+)
 
 type HostBackend interface {
 	GetHost(string) (*Host, error)
@@ -104,6 +108,10 @@ type HostBackend interface {
 	// CreateHost stores a new host atomically, failing with ErrHostExists
 	// if a host of that name exists.
 	CreateHost(*Host) error
+
+	// UpdateHost reads a host, changes it with update and stores it
+	// atomically. An error from update aborts the update and is returned.
+	UpdateHost(name string, update func(*Host) error) (*Host, error)
 }
 
 // HostManager is a HostBackend that can also enumerate and remove hosts.
