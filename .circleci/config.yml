@@ -4,11 +4,11 @@ orbs:
 jobs:
   test:
     docker:
-      - image: circleci/golang:1.16
-    working_directory: /go/src/github.com/pboehm/ddns
+      - image: cimg/go:1.26
     steps:
       - checkout
-      - run: go get -v -t -d ./...
+      - run: go mod download
+      - run: go vet ./...
       - run: go test -v ./...
 
   docker-build:

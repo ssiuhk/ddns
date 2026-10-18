@@ -1,5 +1,3 @@
-version: '2'
-
 services:
   ddns:
     environment:
@@ -10,24 +8,24 @@ services:
   powerdns:
     ports:
       - "53:53/udp"
+      - "53:53/tcp"
 
   redis:
     volumes:
-      - "${PWD}/.redis_mount:/data"
+      - "./.redis_mount:/data"
 
   caddy:
     restart: unless-stopped
-    image: abiosoft/caddy:latest
+    image: caddy:2.11
     depends_on:
       - ddns
     environment:
-      ACME_AGREE: "true"
       DDNS_FRONTEND_HOST: ddns:8080
       DDNS_CADDY_DOMAIN: ddns.example.net             # <<< ADJUST DOMAIN
       DDNS_CADDY_TLS_EMAIL: changeme@example.net      # <<< INSERT EMAIL
     volumes:
-      - "${PWD}/caddy/Caddyfile:/etc/Caddyfile"
-      - "${PWD}/.caddy_mount:/root/.caddy"
+      - "./caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "./.caddy_mount:/data"
     ports:
       - "80:80"
       - "443:443"

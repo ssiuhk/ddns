@@ -3,10 +3,18 @@ package backend
 import (
 	"errors"
 	"fmt"
-	"github.com/pboehm/ddns/shared"
 	"strings"
 	"time"
+
+	"github.com/pboehm/ddns/shared"
 )
+
+// recordTTL is the TTL of every record we serve. It is short on purpose, as
+// hosts are expected to change their address at any time.
+const recordTTL = 5
+
+// zoneID is the domain id we report to PowerDNS for the single zone we serve.
+const zoneID = 1
 
 type Request struct {
 	QType      string
@@ -14,14 +22,16 @@ type Request struct {
 	Remote     string
 	Local      string
 	RealRemote string
-	ZoneId     string
+	ZoneId     int
 }
 
 type Response struct {
-	QType   string `json:"qtype"`
-	QName   string `json:"qname"`
-	Content string `json:"content"`
-	TTL     int    `json:"ttl"`
+	QType    string `json:"qtype"`
+	QName    string `json:"qname"`
+	Content  string `json:"content"`
+	TTL      int    `json:"ttl"`
+	DomainID int    `json:"domain_id"`
+	Auth     bool   `json:"auth"`
 }
 
 type HostLookup struct {
@@ -33,57 +43,67 @@ func NewHostLookup(config *shared.Config, hostsBackend shared.HostBackend) *Host
 	return &HostLookup{config, hostsBackend}
 }
 
-func (l *HostLookup) Lookup(request *Request) (*Response, error) {
-	responseRecord := request.QType
-	responseContent := ""
+// Lookup returns every record matching the request. PowerDNS mostly asks for
+// ANY and filters itself, so ANY returns the full RRset of the name.
+func (l *HostLookup) Lookup(request *Request) ([]*Response, error) {
+	queryName := shared.NormalizeName(request.QName)
 
-	switch request.QType {
-	case "SOA":
-		responseContent = fmt.Sprintf("%s. hostmaster%s. %d 1800 3600 7200 5",
-			l.config.SOAFqdn, l.config.Domain, l.currentSOASerial())
+	var records []*Response
 
-	case "NS":
-		responseContent = l.config.SOAFqdn
-
-	case "A", "AAAA", "ANY":
-		hostname, err := l.extractHostname(request.QName)
+	if queryName == l.config.Zone() {
+		records = []*Response{
+			l.record(request.QName, "SOA", fmt.Sprintf("%s. hostmaster.%s. %d 1800 3600 7200 5",
+				l.config.SOAFqdn, l.config.Zone(), l.currentSOASerial())),
+			l.record(request.QName, "NS", l.config.SOAFqdn),
+		}
+	} else {
+		hostname, err := l.extractHostname(queryName)
 		if err != nil {
 			return nil, err
 		}
 
-		var host *shared.Host
-		if host, err = l.hosts.GetHost(hostname); err != nil {
+		host, err := l.hosts.GetHost(hostname)
+		if err != nil {
 			return nil, err
 		}
 
-		responseContent = host.Ip
-
-		responseRecord = "A"
+		recordType := "A"
 		if !host.IsIPv4() {
-			responseRecord = "AAAA"
+			recordType = "AAAA"
 		}
-
-		if (request.QType == "A" || request.QType == "AAAA") && request.QType != responseRecord {
-			return nil, errors.New("IP address is not valid for requested record")
-		}
-
-	default:
-		return nil, errors.New("Invalid request")
+		records = []*Response{l.record(request.QName, recordType, host.Ip)}
 	}
 
-	return &Response{QType: responseRecord, QName: request.QName, Content: responseContent, TTL: 5}, nil
+	if request.QType == "ANY" {
+		return records, nil
+	}
+
+	var matching []*Response
+	for _, record := range records {
+		if record.QType == request.QType {
+			matching = append(matching, record)
+		}
+	}
+
+	if len(matching) == 0 {
+		return nil, errors.New("No record of the requested type")
+	}
+
+	return matching, nil
+}
+
+func (l *HostLookup) record(qname, qtype, content string) *Response {
+	return &Response{QType: qtype, QName: qname, Content: content, TTL: recordTTL, DomainID: zoneID, Auth: true}
 }
 
 // extractHostname extract the host part of the fqdn: pi.d.example.org -> pi
-func (l *HostLookup) extractHostname(rawQueryName string) (string, error) {
-	queryName := strings.ToLower(rawQueryName)
-
+func (l *HostLookup) extractHostname(queryName string) (string, error) {
 	hostname := ""
 	if strings.HasSuffix(queryName, l.config.Domain) {
 		hostname = queryName[:len(queryName)-len(l.config.Domain)]
 	}
 
-	if hostname == "" {
+	if hostname == "" || strings.Contains(hostname, ".") {
 		return "", errors.New("Query name does not correspond to our domain")
 	}
 

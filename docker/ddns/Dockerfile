@@ -1,17 +1,21 @@
-FROM golang:alpine
+FROM golang:1.27-alpine AS build
 
-RUN apk add --no-cache git
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
 
-WORKDIR /go/src/github.com/pboehm/ddns
 COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -o /ddns .
 
-RUN GO111MODULE=on go get -d -v ./...
-RUN GO111MODULE=on go install -v ./...
+FROM alpine:3.24
 
-ENV GIN_MODE release
-ENV DDNS_EXPIRATION_DAYS 10
+COPY --from=build /ddns /usr/local/bin/ddns
+USER nobody
 
-CMD /go/bin/ddns \
+ENV GIN_MODE=release
+ENV DDNS_EXPIRATION_DAYS=10
+
+CMD ddns \
     --domain=${DDNS_DOMAIN} \
     --soa_fqdn=${DDNS_SOA_DOMAIN} \
     --redis=${DDNS_REDIS_HOST} \

@@ -42,6 +42,9 @@ func (c *Config) Initialize() {
 func (c *Config) Validate() {
 	flag.Parse()
 
+	c.Domain = strings.ToLower(strings.TrimSuffix(c.Domain, "."))
+	c.SOAFqdn = strings.ToLower(strings.TrimSuffix(c.SOAFqdn, "."))
+
 	if c.Domain == "" {
 		log.Fatal("You have to supply the domain via --domain=DOMAIN")
 	} else if !strings.HasPrefix(c.Domain, ".") {
@@ -52,4 +55,15 @@ func (c *Config) Validate() {
 	if c.SOAFqdn == "" {
 		log.Fatal("You have to supply the server FQDN via --soa_fqdn=FQDN")
 	}
+}
+
+// Zone returns the name of the zone we are authoritative for, without the
+// leading and trailing dot: d.example.org
+func (c *Config) Zone() string {
+	return strings.TrimPrefix(c.Domain, ".")
+}
+
+// NormalizeName lowercases a DNS name and strips its trailing dot.
+func NormalizeName(name string) string {
+	return strings.ToLower(strings.TrimSuffix(name, "."))
 }
