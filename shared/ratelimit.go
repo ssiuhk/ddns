@@ -34,19 +34,14 @@ func (l *RateLimiter) recent(key string, now time.Time) []time.Time {
 	return recent
 }
 
-// Allow reports whether key has fewer events than the limit in the window.
+// Reserve records an event for key if it has fewer events than the limit
+// in the window, and reports whether it did. Checking and recording in one
+// step keeps concurrent requests from all seeing the same unused quota.
 // A limit of zero or less allows everything.
-func (l *RateLimiter) Allow(key string) bool {
+func (l *RateLimiter) Reserve(key string) bool {
 	if l.limit <= 0 {
 		return true
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.recent(key, time.Now())) < l.limit
-}
-
-// Add records an event for key.
-func (l *RateLimiter) Add(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
@@ -58,7 +53,22 @@ func (l *RateLimiter) Add(key string) {
 		}
 	}
 
-	l.events[key] = append(l.recent(key, now), now)
+	recent := l.recent(key, now)
+	if len(recent) >= l.limit {
+		return false
+	}
+	l.events[key] = append(recent, now)
+	return true
+}
+
+// Release gives back the most recent reservation of key, e.g. when the
+// reserved operation failed.
+func (l *RateLimiter) Release(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if events := l.events[key]; len(events) > 0 {
+		l.events[key] = events[:len(events)-1]
+	}
 }
 
 // Reset forgets all events of key.

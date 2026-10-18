@@ -45,7 +45,10 @@ func (r *RedisBackend) Close() {
 func (r *RedisBackend) GetHost(name string) (*Host, error) {
 	conn := r.pool.Get()
 	defer conn.Close()
+	return getHost(conn, name)
+}
 
+func getHost(conn redis.Conn, name string) (*Host, error) {
 	host := Host{Hostname: name}
 
 	var err error
@@ -56,7 +59,7 @@ func (r *RedisBackend) GetHost(name string) (*Host, error) {
 	}
 
 	if len(data) == 0 {
-		return nil, errors.New("Host does not exist")
+		return nil, ErrHostNotFound
 	}
 
 	if err = redis.ScanStruct(data, &host); err != nil {
@@ -142,22 +145,100 @@ func (r *RedisBackend) SetHost(host *Host) error {
 	conn := r.pool.Get()
 	defer conn.Close()
 
-	var err error
+	conn.Send("MULTI")
+	r.sendHost(conn, host)
+	return execOK(conn)
+}
 
-	if _, err = conn.Do("HSET", redis.Args{}.Add(host.Hostname).AddFlat(host)...); err != nil {
+// CreateHost stores a new host, or returns ErrHostExists if the name is
+// taken, also when another request creates it at the same time.
+func (r *RedisBackend) CreateHost(host *Host) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	if _, err := conn.Do("WATCH", host.Hostname); err != nil {
 		return err
 	}
-	if _, err = conn.Do("HDEL", host.Hostname, "ip"); err != nil {
+	exists, err := redis.Bool(conn.Do("EXISTS", host.Hostname))
+	if err != nil || exists {
+		conn.Do("UNWATCH")
+		if err == nil {
+			err = ErrHostExists
+		}
 		return err
 	}
 
+	conn.Send("MULTI")
+	r.sendHost(conn, host)
+	if err := execOK(conn); err != nil {
+		if errors.Is(err, redis.ErrNil) {
+			// the watched key changed, so someone else registered it
+			return ErrHostExists
+		}
+		return err
+	}
+	return nil
+}
+
+// UpdateHost changes a host with update and stores it, retrying when the
+// host changes in the meantime, so concurrent updates of different fields
+// do not undo each other. An error from update aborts without storing.
+func (r *RedisBackend) UpdateHost(name string, update func(*Host) error) (*Host, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	for attempt := 0; attempt < 10; attempt++ {
+		if _, err := conn.Do("WATCH", name); err != nil {
+			return nil, err
+		}
+		host, err := getHost(conn, name)
+		if err == nil {
+			err = update(host)
+		}
+		if err != nil {
+			conn.Do("UNWATCH")
+			return nil, err
+		}
+
+		conn.Send("MULTI")
+		r.sendHost(conn, host)
+		err = execOK(conn)
+		if err == nil {
+			return host, nil
+		}
+		if !errors.Is(err, redis.ErrNil) {
+			return nil, err
+		}
+		// the host changed since it was read, start over
+	}
+	return nil, errors.New("the host is changing too often, try again")
+}
+
+// sendHost queues the commands that store host and set its expiry.
+func (r *RedisBackend) sendHost(conn redis.Conn, host *Host) {
+	conn.Send("HSET", redis.Args{}.Add(host.Hostname).AddFlat(host)...)
+	conn.Send("HDEL", host.Hostname, "ip")
 	if host.Persistent {
-		_, err = conn.Do("PERSIST", host.Hostname)
+		conn.Send("PERSIST", host.Hostname)
 	} else {
-		_, err = conn.Do("EXPIRE", host.Hostname, r.expirationSeconds)
+		conn.Send("EXPIRE", host.Hostname, r.expirationSeconds)
 	}
+}
 
-	return err
+// execOK runs EXEC and returns the first error, including those of single
+// commands, which Redis reports in the reply instead of failing EXEC.
+// It returns redis.ErrNil when a watched key changed and nothing ran.
+func execOK(conn redis.Conn) error {
+	replies, err := redis.Values(conn.Do("EXEC"))
+	if err != nil {
+		return err
+	}
+	for _, reply := range replies {
+		if e, ok := reply.(redis.Error); ok {
+			return e
+		}
+	}
+	return nil
 }
 
 const (
