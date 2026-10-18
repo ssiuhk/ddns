@@ -1,11 +1,13 @@
 package frontend
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pboehm/ddns/shared"
 )
 
 // dynDNS2Update implements the update protocol of DynDNS, which routers and
@@ -46,23 +48,27 @@ func (f *Frontend) dynDNS2Update(c *gin.Context) {
 			continue
 		}
 
-		host, err := f.hosts.GetHost(hostname)
-		if err != nil {
+		var before string
+		host, err := f.hosts.UpdateHost(hostname, func(host *shared.Host) error {
+			if !host.HasToken(token) {
+				return errWrongToken
+			}
+			before = strings.Join(host.Addresses(), ",")
+			for _, ip := range addresses {
+				host.SetIP(ip)
+			}
+			host.Touch()
+			return nil
+		})
+		switch {
+		case errors.Is(err, shared.ErrHostNotFound):
 			answers = append(answers, "nohost")
 			continue
-		}
-		if !host.HasToken(token) {
+		case errors.Is(err, errWrongToken):
 			authFailed = true
 			answers = append(answers, "badauth")
 			continue
-		}
-
-		before := strings.Join(host.Addresses(), ",")
-		for _, ip := range addresses {
-			host.SetIP(ip)
-		}
-		host.Touch()
-		if err := f.hosts.SetHost(host); err != nil {
+		case err != nil:
 			answers = append(answers, "911")
 			continue
 		}

@@ -9,10 +9,13 @@ import (
 // validation, using double signatures, which suits a combined signing key:
 //
 //  1. Start: a new key is added and signs alongside the old one. Once the
-//     new DNSKEY has propagated, the DS at the parent is replaced.
-//  2. Switch: once resolvers only know the new DS, the old key stops
-//     signing but stays published, for signatures still cached.
-//  3. Finish: once those have expired, the old key is removed.
+//     new DNSKEY has propagated, its DS is added at the parent, by hand or
+//     from the CDS records.
+//  2. Switch: once resolvers know the new DS, the old key stops signing but
+//     stays published, for signatures still cached. The old DS may stay, as
+//     one DS that matches a signing key is enough.
+//  3. Finish: once those have expired, the old key is removed, after which
+//     the old DS can go.
 //
 // Every run of the rollover command does the next step, decided from the
 // state of the keys.

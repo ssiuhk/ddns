@@ -33,6 +33,22 @@ func (m *memoryStore) SetHost(host *shared.Host) error {
 	m.hosts[host.Hostname] = &copied
 	return nil
 }
+func (m *memoryStore) CreateHost(host *shared.Host) error {
+	if _, ok := m.hosts[host.Hostname]; ok {
+		return shared.ErrHostExists
+	}
+	return m.SetHost(host)
+}
+func (m *memoryStore) UpdateHost(name string, update func(*shared.Host) error) (*shared.Host, error) {
+	host, err := m.GetHost(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := update(host); err != nil {
+		return nil, err
+	}
+	return host, m.SetHost(host)
+}
 func (m *memoryStore) ListHosts() ([]*shared.Host, error) {
 	var hosts []*shared.Host
 	for _, host := range m.hosts {
