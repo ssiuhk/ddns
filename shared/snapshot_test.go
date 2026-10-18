@@ -71,3 +71,23 @@ func TestDumpAndLoadRoundTrip(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "hash", hash)
 }
+
+func TestLoadRejectsInvalidSnapshotAndKeepsData(t *testing.T) {
+	r := testRedis(t)
+
+	assert.Nil(t, r.Load(&Snapshot{Version: snapshotVersion}))
+	assert.Nil(t, r.SetHost(&Host{Hostname: "www", Ip: "10.0.0.1", Token: "abc"}))
+
+	for name, entries := range map[string][]SnapshotItem{
+		"duplicate key":    {{Key: "nas", Hash: map[string]string{"ip": "10.0.0.2"}}, {Key: "nas", Hash: map[string]string{"ip": "10.0.0.3"}}},
+		"string then hash": {{Key: "admin:x", String: "YQ=="}, {Key: "admin:x", Hash: map[string]string{"a": "b"}}},
+		"host as string":   {{Key: "nas", String: "YQ=="}},
+		"both values":      {{Key: "nas", String: "YQ==", Hash: map[string]string{"a": "b"}}},
+		"negative ttl":     {{Key: "nas", Hash: map[string]string{"a": "b"}, TTL: -1}},
+	} {
+		assert.NotNil(t, r.Load(&Snapshot{Version: snapshotVersion, Entries: entries}), name)
+		host, err := r.GetHost("www")
+		assert.Nil(t, err, name)
+		assert.Equal(t, "abc", host.Token, name)
+	}
+}
