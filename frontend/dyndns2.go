@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 )
 
 // dynDNS2Update implements the update protocol of DynDNS, which routers and

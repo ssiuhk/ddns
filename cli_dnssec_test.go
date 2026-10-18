@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/miekg/dns"
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 	"github.com/stretchr/testify/assert"
 )
 
