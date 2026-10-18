@@ -132,19 +132,65 @@ func (r *RedisBackend) SetHost(host *Host) error {
 	conn := r.pool.Get()
 	defer conn.Close()
 
-	var err error
+	conn.Send("MULTI")
+	r.sendHost(conn, host)
+	return execOK(conn)
+}
 
-	if _, err = conn.Do("HMSET", redis.Args{}.Add(host.Hostname).AddFlat(host)...); err != nil {
+// CreateHost stores a new host, or returns ErrHostExists if the name is
+// taken, also when another request creates it at the same time.
+func (r *RedisBackend) CreateHost(host *Host) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	if _, err := conn.Do("WATCH", host.Hostname); err != nil {
+		return err
+	}
+	exists, err := redis.Bool(conn.Do("EXISTS", host.Hostname))
+	if err != nil || exists {
+		conn.Do("UNWATCH")
+		if err == nil {
+			err = ErrHostExists
+		}
 		return err
 	}
 
-	if host.Persistent {
-		_, err = conn.Do("PERSIST", host.Hostname)
-	} else {
-		_, err = conn.Do("EXPIRE", host.Hostname, r.expirationSeconds)
+	conn.Send("MULTI")
+	r.sendHost(conn, host)
+	if err := execOK(conn); err != nil {
+		if errors.Is(err, redis.ErrNil) {
+			// the watched key changed, so someone else registered it
+			return ErrHostExists
+		}
+		return err
 	}
+	return nil
+}
 
-	return err
+// sendHost queues the commands that store host and set its expiry.
+func (r *RedisBackend) sendHost(conn redis.Conn, host *Host) {
+	conn.Send("HMSET", redis.Args{}.Add(host.Hostname).AddFlat(host)...)
+	if host.Persistent {
+		conn.Send("PERSIST", host.Hostname)
+	} else {
+		conn.Send("EXPIRE", host.Hostname, r.expirationSeconds)
+	}
+}
+
+// execOK runs EXEC and returns the first error, including those of single
+// commands, which Redis reports in the reply instead of failing EXEC.
+// It returns redis.ErrNil when a watched key changed and nothing ran.
+func execOK(conn redis.Conn) error {
+	replies, err := redis.Values(conn.Do("EXEC"))
+	if err != nil {
+		return err
+	}
+	for _, reply := range replies {
+		if e, ok := reply.(redis.Error); ok {
+			return e
+		}
+	}
+	return nil
 }
 
 const (

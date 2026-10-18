@@ -137,7 +137,9 @@ func (a *Admin) renderLogin(c *gin.Context, status int, loginError string) {
 func (a *Admin) passwordLogin(c *gin.Context) {
 	address, _ := a.remoteAddr(c.Request)
 
-	if !a.limiter.Allow(address) {
+	// every attempt takes a slot before the slow password check, so parallel
+	// guesses can not get past the limit; a successful login resets it
+	if !a.limiter.Reserve(address) {
 		a.renderLogin(c, http.StatusTooManyRequests, "Too many failed attempts, please wait a few minutes.")
 		return
 	}
@@ -147,7 +149,6 @@ func (a *Admin) passwordLogin(c *gin.Context) {
 		log.Printf("Could not check the admin password: %v", err)
 	}
 	if !ok {
-		a.limiter.Add(address)
 		log.Printf("Failed admin login from %s", address)
 		a.renderLogin(c, http.StatusUnauthorized, "The password is not correct.")
 		return

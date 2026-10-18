@@ -1,6 +1,7 @@
 package frontend
 
 import (
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/pboehm/ddns/admin"
@@ -104,13 +105,8 @@ func (f *Frontend) register(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Your sender IP address is not in the right format"})
 		return
 	}
-	if !f.registrations.Allow(address) {
+	if !f.registrations.Reserve(address) {
 		c.JSON(429, gin.H{"error": "Too many hosts registered from your address, please try again later."})
-		return
-	}
-
-	if _, err := f.hosts.GetHost(hostname); err == nil {
-		c.JSON(403, gin.H{"error": "This hostname has already been registered."})
 		return
 	}
 
@@ -118,11 +114,15 @@ func (f *Frontend) register(c *gin.Context) {
 	host.GenerateAndSetToken()
 	host.Touch()
 
-	if err = f.hosts.SetHost(host); err != nil {
-		c.JSON(400, gin.H{"error": "Could not register host."})
+	if err = f.hosts.CreateHost(host); err != nil {
+		f.registrations.Release(address)
+		if errors.Is(err, shared.ErrHostExists) {
+			c.JSON(403, gin.H{"error": "This hostname has already been registered."})
+		} else {
+			c.JSON(400, gin.H{"error": "Could not register host."})
+		}
 		return
 	}
-	f.registrations.Add(address)
 
 	c.JSON(200, gin.H{
 		"hostname":    host.Hostname,

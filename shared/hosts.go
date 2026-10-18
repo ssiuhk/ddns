@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -58,10 +59,17 @@ func IsValidHostname(name string) bool {
 	return hostnamePattern.MatchString(name)
 }
 
+// ErrHostExists is returned by CreateHost when the name is taken.
+var ErrHostExists = errors.New("Host already exists")
+
 type HostBackend interface {
 	GetHost(string) (*Host, error)
 
 	SetHost(*Host) error
+
+	// CreateHost stores a new host atomically, failing with ErrHostExists
+	// if a host of that name exists.
+	CreateHost(*Host) error
 }
 
 // HostManager is a HostBackend that can also enumerate and remove hosts.
