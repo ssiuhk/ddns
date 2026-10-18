@@ -25,6 +25,21 @@ func (b *testHostBackend) SetHost(host *shared.Host) error {
 	return nil
 }
 
+func (b *testHostBackend) CreateHost(host *shared.Host) error {
+	if _, ok := b.hosts[host.Hostname]; ok {
+		return shared.ErrHostExists
+	}
+	return b.SetHost(host)
+}
+
+func (b *testHostBackend) UpdateHost(name string, update func(*shared.Host) error) (*shared.Host, error) {
+	host, err := b.GetHost(name)
+	if err != nil {
+		return nil, err
+	}
+	return host, update(host)
+}
+
 func buildLookup(domain string) (*shared.Config, *testHostBackend, *HostLookup) {
 	config := &shared.Config{
 		Verbose: false,
@@ -36,17 +51,23 @@ func buildLookup(domain string) (*shared.Config, *testHostBackend, *HostLookup) 
 		hosts: map[string]*shared.Host{
 			"www": {
 				Hostname: "www",
-				Ip:       "10.11.12.13",
+				IPv4:     "10.11.12.13",
 				Token:    "abcdef",
 			},
 			"v4": {
 				Hostname: "v4",
-				Ip:       "10.10.10.10",
+				IPv4:     "10.10.10.10",
 				Token:    "ghijkl",
+			},
+			"dual": {
+				Hostname: "dual",
+				IPv4:     "10.20.30.40",
+				IPv6:     "2001:db8::40",
+				Token:    "mnopqr",
 			},
 			"v6": {
 				Hostname: "v6",
-				Ip:       "2001:db8:85a3::8a2e:370:7334",
+				IPv6:     "2001:db8:85a3::8a2e:370:7334",
 				Token:    "ghijkl",
 			},
 		},
@@ -98,6 +119,16 @@ func TestRequestHandling(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Len(t, records, 2)
 
+	// every configured nameserver is announced
+	config, _, multi := buildLookup(".example.org")
+	config.Nameservers = []string{"ns1.example.net", "ns2.example.net"}
+	records, err = multi.Lookup(buildRequest("example.org.", "NS"))
+	assert.Nil(t, err)
+	if assert.Len(t, records, 2) {
+		assert.Equal(t, "ns1.example.net", records[0].Content)
+		assert.Equal(t, "ns2.example.net", records[1].Content)
+	}
+
 	// SOA and NS only exist at the apex, otherwise hosts would look like zones or delegations
 	records, err = lookup.Lookup(buildRequest("www.example.org.", "SOA"))
 	assertNone(t, records, err)
@@ -141,4 +172,17 @@ func TestRequestHandling(t *testing.T) {
 
 	records, err = lookup.Lookup(buildRequest("v6.example.org.", "A"))
 	assertNone(t, records, err)
+
+	// a host can have both an IPv4 and an IPv6 address
+	records, err = lookup.Lookup(buildRequest("dual.example.org.", "ANY"))
+	assert.Nil(t, err)
+	if assert.Len(t, records, 2) {
+		assert.Equal(t, "A", records[0].QType)
+		assert.Equal(t, "10.20.30.40", records[0].Content)
+		assert.Equal(t, "AAAA", records[1].QType)
+		assert.Equal(t, "2001:db8::40", records[1].Content)
+	}
+
+	records, err = lookup.Lookup(buildRequest("dual.example.org.", "AAAA"))
+	assertSingle(t, records, err, "AAAA", "dual.example.org.", "2001:db8::40")
 }

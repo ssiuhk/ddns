@@ -14,9 +14,11 @@ USER nobody
 
 ENV GIN_MODE=release
 ENV DDNS_EXPIRATION_DAYS=10
+ENV DDNS_DNSSEC=true
 
 CMD ddns \
     --domain=${DDNS_DOMAIN} \
     --soa_fqdn=${DDNS_SOA_DOMAIN} \
     --redis=${DDNS_REDIS_HOST} \
-    --expiration-days=${DDNS_EXPIRATION_DAYS}
+    --expiration-days=${DDNS_EXPIRATION_DAYS} \
+    --dnssec=${DDNS_DNSSEC}

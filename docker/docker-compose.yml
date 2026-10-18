@@ -1,6 +1,7 @@
 services:
   ddns:
     restart: unless-stopped
+    image: ddns:local
     build:
       context: ..
       dockerfile: docker/ddns/Dockerfile
@@ -24,3 +25,23 @@ services:
   redis:
     restart: unless-stopped
     image: redis:8-alpine
+
+  # Daily backup of all ddns data into ./.backups, deleting backups older
+  # than 180 days. Restore the newest one with:
+  #   docker compose --project-name ddns exec backup ddns load --input /backups
+  # or a given one with --input /backups/<file>.
+  backup:
+    restart: unless-stopped
+    image: ddns:local
+    build:
+      context: ..
+      dockerfile: docker/ddns/Dockerfile
+    depends_on:
+      - redis
+    # root, to write into the bind mounted directory
+    user: "0:0"
+    command: ["ddns", "backup", "--dir", "/backups", "--interval", "24h", "--keep-days", "180"]
+    environment:
+      DDNS_REDIS_HOST: redis:6379
+    volumes:
+      - "./.backups:/backups"

@@ -12,12 +12,22 @@ import (
 type Backend struct {
 	config *shared.Config
 	lookup *HostLookup
+	keys   shared.KeyStore
+	hosts  shared.HostManager
 }
 
-func NewBackend(config *shared.Config, lookup *HostLookup) *Backend {
+// Store is the storage the backend serves the zone and its keys from.
+type Store interface {
+	shared.KeyStore
+	shared.HostManager
+}
+
+func NewBackend(config *shared.Config, lookup *HostLookup, store Store) *Backend {
 	return &Backend{
 		config: config,
 		lookup: lookup,
+		keys:   store,
+		hosts:  store,
 	}
 }
 
@@ -72,6 +82,10 @@ func (b *Backend) Run() error {
 // dispatch answers a single remote backend call. A result of false tells
 // PowerDNS that the call is unsupported or that there is nothing to return.
 func (b *Backend) dispatch(call *rpcCall) (interface{}, error) {
+	if result, handled, err := b.dispatchDNSSEC(call); handled {
+		return result, err
+	}
+
 	switch call.Method {
 	case "initialize":
 		return true, nil
@@ -90,6 +104,18 @@ func (b *Backend) dispatch(call *rpcCall) (interface{}, error) {
 			RealRemote: params.RealRemote,
 			ZoneId:     params.ZoneId,
 		})
+
+	case "list":
+		var params struct {
+			ZoneName string `json:"zonename"`
+		}
+		if err := json.Unmarshal(call.Parameters, &params); err != nil {
+			return nil, err
+		}
+		if !b.isOurZone(params.ZoneName) {
+			return false, nil
+		}
+		return b.list()
 
 	case "getAllDomains":
 		return []interface{}{b.domainInfo()}, nil
@@ -120,4 +146,27 @@ func (b *Backend) domainInfo() gin.H {
 
 func (b *Backend) isOurZone(name string) bool {
 	return shared.NormalizeName(name) == b.config.Zone()
+}
+
+// list returns every record of the zone, which pdnsutil uses to check it.
+func (b *Backend) list() ([]*Response, error) {
+	apex := b.config.Zone() + "."
+
+	records, err := b.lookup.Lookup(&Request{QName: apex, QType: "ANY"})
+	if err != nil {
+		return nil, err
+	}
+
+	hosts, err := b.hosts.ListHosts()
+	if err != nil {
+		return nil, err
+	}
+	for _, host := range hosts {
+		hostRecords, err := b.lookup.Lookup(&Request{QName: host.Hostname + "." + apex, QType: "ANY"})
+		if err == nil {
+			records = append(records, hostRecords...)
+		}
+	}
+
+	return records, nil
 }
