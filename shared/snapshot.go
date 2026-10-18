@@ -128,19 +128,35 @@ func (r *RedisBackend) Load(snapshot *Snapshot) error {
 		return fmt.Errorf("unsupported snapshot version %d", snapshot.Version)
 	}
 
-	// validate everything before touching Redis
+	// validate everything before touching Redis, so a bad snapshot can not
+	// fail half way through the transaction after the old data is deleted
 	values := make([][]byte, len(snapshot.Entries))
+	seen := make(map[string]bool, len(snapshot.Entries))
 	for i, item := range snapshot.Entries {
 		if !isDDNSKey(item.Key) {
 			return fmt.Errorf("snapshot contains unexpected key %q", item.Key)
 		}
-		if item.Hash == nil {
-			value, err := base64.StdEncoding.DecodeString(item.String)
-			if err != nil {
-				return fmt.Errorf("invalid value of key %s: %v", item.Key, err)
-			}
-			values[i] = value
+		if seen[item.Key] {
+			return fmt.Errorf("snapshot contains key %s more than once", item.Key)
 		}
+		seen[item.Key] = true
+		if item.TTL < 0 {
+			return fmt.Errorf("invalid ttl of key %s", item.Key)
+		}
+		if item.Hash != nil {
+			if item.String != "" {
+				return fmt.Errorf("key %s has both a hash and a string value", item.Key)
+			}
+			continue
+		}
+		if IsValidHostname(item.Key) {
+			return fmt.Errorf("host %s is not a hash", item.Key)
+		}
+		value, err := base64.StdEncoding.DecodeString(item.String)
+		if err != nil {
+			return fmt.Errorf("invalid value of key %s: %v", item.Key, err)
+		}
+		values[i] = value
 	}
 
 	conn := r.pool.Get()
@@ -171,8 +187,19 @@ func (r *RedisBackend) Load(snapshot *Snapshot) error {
 	}
 	conn.Send("SET", lastLoadKey, snapshot.Created.UTC().Format(time.RFC3339))
 
-	_, err = conn.Do("EXEC")
-	return err
+	// Do returns the first error of a queued command, which makes Redis
+	// discard the whole transaction. Errors while executing are returned
+	// per command and do not roll back the others, so check each of them.
+	replies, err := redis.Values(conn.Do("EXEC"))
+	if err != nil {
+		return fmt.Errorf("the load was not applied: %v", err)
+	}
+	for _, reply := range replies {
+		if e, ok := reply.(redis.Error); ok {
+			return fmt.Errorf("the load failed part way, restore a backup: %v", e)
+		}
+	}
+	return nil
 }
 
 // WriteSnapshot writes a snapshot as JSON, gzip compressed if compress is
