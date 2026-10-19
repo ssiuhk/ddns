@@ -16,12 +16,29 @@ type memoryKeyStore struct {
 func (m *memoryKeyStore) GetDomainKeys(string) ([]*DomainKey, error) { return m.keys, nil }
 func (m *memoryKeyStore) AddDomainKey(_ string, key *DomainKey) (int, error) {
 	stored := *key
-	stored.ID = len(m.keys) + 1
+	stored.ID = 1
+	if len(m.keys) > 0 {
+		stored.ID = m.keys[len(m.keys)-1].ID + 1
+	}
 	m.keys = append(m.keys, &stored)
 	return stored.ID, nil
 }
-func (m *memoryKeyStore) RemoveDomainKey(string, int) error                        { return nil }
-func (m *memoryKeyStore) UpdateDomainKey(string, int, func(*DomainKey)) error      { return nil }
+func (m *memoryKeyStore) RemoveDomainKey(_ string, id int) error {
+	for i, key := range m.keys {
+		if key.ID == id {
+			m.keys = append(m.keys[:i], m.keys[i+1:]...)
+		}
+	}
+	return nil
+}
+func (m *memoryKeyStore) UpdateDomainKey(_ string, id int, update func(*DomainKey)) error {
+	for _, key := range m.keys {
+		if key.ID == id {
+			update(key)
+		}
+	}
+	return nil
+}
 func (m *memoryKeyStore) GetAllDomainMetadata(string) (map[string][]string, error) { return nil, nil }
 func (m *memoryKeyStore) SetDomainMetadata(string, string, []string) error         { return nil }
 

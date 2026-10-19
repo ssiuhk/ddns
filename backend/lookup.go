@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 )
 
 // recordTTL is the TTL of every record we serve. It is short on purpose, as

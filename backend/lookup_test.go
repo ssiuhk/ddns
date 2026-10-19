@@ -2,7 +2,7 @@ package backend
 
 import (
 	"errors"
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

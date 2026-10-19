@@ -3,7 +3,7 @@ package backend
 import (
 	"encoding/json"
 
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 )
 
 // The remote backend cannot list the names of the zone in DNSSEC order, so

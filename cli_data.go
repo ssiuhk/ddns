@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 )
 
 func redisFlag(flags *flag.FlagSet) *string {
@@ -16,16 +16,32 @@ func redisFlag(flags *flag.FlagSet) *string {
 		"The Redis socket that should be used (env DDNS_REDIS_HOST)")
 }
 
+func passphraseFlag(flags *flag.FlagSet) *string {
+	return flags.String("passphrase-file", "",
+		"File with the passphrase that encrypts dumps and backups (default env DDNS_BACKUP_PASSPHRASE or DDNS_BACKUP_PASSPHRASE_FILE)")
+}
+
 // dumpData writes all ddns data to stdout or a file, e.g. to pipe it to a
-// secondary server:
+// secondary server, encrypted when a passphrase is configured:
 //
 //	docker compose exec -T ddns ddns dump > ddns.json
 func dumpData(args []string) int {
 	flags := flag.NewFlagSet("dump", flag.ExitOnError)
 	redisHost := redisFlag(flags)
+	passphraseFile := passphraseFlag(flags)
 	output := flags.String("output", "-", "File to write to, - for stdout")
 	compress := flags.Bool("gzip", false, "Compress the output with gzip")
+	plain := flags.Bool("plain", false, "Do not encrypt the output even if a passphrase is configured")
 	flags.Parse(args)
+
+	passphrase, err := shared.LoadPassphrase(*passphraseFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if *plain {
+		passphrase = ""
+	}
 
 	redis := shared.NewRedisBackend(&shared.Config{RedisHost: *redisHost})
 	defer redis.Close()
@@ -36,7 +52,7 @@ func dumpData(args []string) int {
 		return 1
 	}
 
-	write := func(w io.Writer) error { return shared.WriteSnapshot(w, snapshot, *compress) }
+	write := func(w io.Writer) error { return shared.WriteSnapshot(w, snapshot, *compress, passphrase) }
 	if *output == "-" {
 		err = write(os.Stdout)
 	} else {
@@ -47,21 +63,28 @@ func dumpData(args []string) int {
 		fmt.Fprintln(os.Stderr, "Could not write the dump:", err)
 		return 1
 	}
-	fmt.Fprintf(os.Stderr, "Dumped %d keys\n", len(snapshot.Entries))
+	encrypted := ""
+	if passphrase != "" {
+		encrypted = ", encrypted"
+	}
+	fmt.Fprintf(os.Stderr, "Dumped %d keys%s\n", len(snapshot.Entries), encrypted)
 	return 0
 }
 
-// loadData replaces all ddns data in Redis with a dump, plain or gzipped,
-// read from stdin or a file.
+// loadData replaces all ddns data in Redis with a dump, plain, gzipped or
+// encrypted, read from stdin or a file.
 func loadData(args []string) int {
 	flags := flag.NewFlagSet("load", flag.ExitOnError)
 	redisHost := redisFlag(flags)
+	passphraseFile := passphraseFlag(flags)
 	input := flags.String("input", "-", "File to read from, - for stdin; a directory loads the newest backup in it")
 	allowEmpty := flags.Bool("allow-empty", false, "Allow loading a dump without any data, which deletes everything")
 	flags.Parse(args)
 
 	var r io.Reader = os.Stdin
-	if *input != "-" {
+	if *input == "-" {
+		fmt.Fprintln(os.Stderr, "Reading the dump from standard input; to restore the newest backup use --input /backups")
+	} else {
 		path := *input
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			if path, err = shared.LatestBackup(path); err != nil {
@@ -80,13 +103,20 @@ func loadData(args []string) int {
 		r = file
 	}
 
-	snapshot, err := shared.ReadSnapshot(r)
+	passphrase, err := shared.LoadPassphrase(*passphraseFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	snapshot, err := shared.ReadSnapshot(r, passphrase)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	if len(snapshot.Entries) == 0 && !*allowEmpty {
-		fmt.Fprintln(os.Stderr, "The dump is empty, refusing to delete all data (use --allow-empty to load it anyway)")
+		fmt.Fprintf(os.Stderr, "The dump taken at %s has no data, refusing to delete everything (use --allow-empty to load it anyway)\n",
+			snapshot.Created.Format(time.RFC3339))
 		return 1
 	}
 
@@ -109,23 +139,40 @@ const backupRetry = time.Minute
 func backupData(args []string) int {
 	flags := flag.NewFlagSet("backup", flag.ExitOnError)
 	redisHost := redisFlag(flags)
+	passphraseFile := passphraseFlag(flags)
 	dir := flags.String("dir", "/backups", "Directory the backups are written to")
 	interval := flags.Duration("interval", 24*time.Hour, "Time between backups")
 	keepDays := flags.Int("keep-days", 180, "Delete backups older than this many days")
 	once := flags.Bool("once", false, "Take one backup and exit")
 	flags.Parse(args)
 
+	passphrase, err := shared.LoadPassphrase(*passphraseFile)
+	if err != nil {
+		log.Print(err)
+		return 1
+	}
+	if passphrase == "" {
+		log.Print("No backup passphrase is configured, backups are not encrypted and contain the DNSSEC private key")
+	}
+
 	redis := shared.NewRedisBackend(&shared.Config{RedisHost: *redisHost})
 	defer redis.Close()
+
+	log.Printf("Backing up the ddns data in Redis at %s to %s", *redisHost, *dir)
 
 	run := func() error {
 		snapshot, err := redis.Dump()
 		if err != nil {
-			return fmt.Errorf("could not read the data from Redis: %v", err)
+			return fmt.Errorf("could not read the data from Redis at %s: %v", *redisHost, err)
+		}
+		if len(snapshot.Entries) == 0 {
+			// an empty backup would become the newest one, which a restore picks
+			return fmt.Errorf("Redis at %s has no ddns data, not writing an empty backup; "+
+				"check that DDNS_REDIS_HOST of the backup service is the Redis of the ddns service", *redisHost)
 		}
 
 		now := time.Now()
-		path, err := shared.WriteBackup(*dir, snapshot, now)
+		path, err := shared.WriteBackup(*dir, snapshot, now, passphrase)
 		if err != nil {
 			return fmt.Errorf("could not write the backup: %v", err)
 		}

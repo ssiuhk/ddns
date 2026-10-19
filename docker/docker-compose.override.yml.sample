@@ -1,3 +1,8 @@
+# Encrypts backups and the data synced to a secondary, see README. Use the same
+# passphrase on every server and keep a copy elsewhere: backups cannot be
+# restored without it. Generate one with: openssl rand -base64 32
+x-backup-passphrase: &backup-passphrase ""         # <<< INSERT PASSPHRASE
+
 services:
   ddns:
     environment:
@@ -5,11 +10,15 @@ services:
       DDNS_SOA_DOMAIN: ddns.example.net               # <<< ADJUST DOMAIN
       DDNS_EXPIRATION_DAYS: 10
       DDNS_PUBLIC_URL: https://ddns.example.net       # <<< ADJUST DOMAIN
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
       # "closed" leaves creating hosts to the admin panel
       DDNS_REGISTRATION: open
       DDNS_REGISTRATIONS_PER_HOUR: 5
-      # With a secondary server, list every nameserver of the zone (README)
+      # With a secondary server, list every nameserver of the zone and where
+      # to push the data to, with a token both share (README)
       # DDNS_NAMESERVERS: ddns.example.net,ns2.example.net
+      # DDNS_SYNC_TO: https://ns2.example.net
+      # DDNS_SYNC_TOKEN: ...                         # openssl rand -hex 32
       # Optional: sign in to the admin panel with Google, see README
       # DDNS_GOOGLE_CLIENT_ID: ...
       # DDNS_GOOGLE_CLIENT_SECRET: ...
@@ -19,6 +28,10 @@ services:
     ports:
       - "53:53/udp"
       - "53:53/tcp"
+
+  backup:
+    environment:
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
 
   redis:
     volumes:

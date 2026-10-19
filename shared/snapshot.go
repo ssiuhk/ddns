@@ -79,46 +79,93 @@ func (r *RedisBackend) Dump() (*Snapshot, error) {
 	}
 
 	snapshot := &Snapshot{Version: snapshotVersion, Created: time.Now().UTC(), Entries: []SnapshotItem{}}
-	for _, key := range keys {
-		kind, err := redis.String(conn.Do("TYPE", key))
+	for start := 0; start < len(keys); start += dumpBatch {
+		batch := keys[start:min(start+dumpBatch, len(keys))]
+		items, err := dumpBatchOf(conn, batch)
 		if err != nil {
 			return nil, err
 		}
+		snapshot.Entries = append(snapshot.Entries, items...)
+	}
 
-		item := SnapshotItem{Key: key}
+	return snapshot, nil
+}
+
+// dumpBatch is how many keys Dump reads per round trip; one round trip per
+// key made dumping 100,000 hosts take seconds.
+const dumpBatch = 1000
+
+// dumpBatchOf reads keys with two pipelined round trips: their types, then
+// their values and TTLs.
+func dumpBatchOf(conn redis.Conn, keys []string) ([]SnapshotItem, error) {
+	for _, key := range keys {
+		conn.Send("TYPE", key)
+	}
+	if err := conn.Flush(); err != nil {
+		return nil, err
+	}
+	kinds := make([]string, len(keys))
+	for i, key := range keys {
+		kind, err := redis.String(conn.Receive())
+		if err != nil {
+			return nil, err
+		}
 		switch kind {
 		case "hash":
-			if item.Hash, err = redis.StringMap(conn.Do("HGETALL", key)); err != nil {
-				return nil, err
-			}
+			conn.Send("HGETALL", key)
 		case "string":
-			value, err := redis.Bytes(conn.Do("GET", key))
-			if err != nil {
-				return nil, err
-			}
-			item.String = base64.StdEncoding.EncodeToString(value)
+			conn.Send("GET", key)
 		case "none":
 			// expired while dumping
 			continue
 		default:
 			return nil, fmt.Errorf("unexpected type %s of key %s", kind, key)
 		}
+		conn.Send("PTTL", key)
+		kinds[i] = kind
+	}
+	if err := conn.Flush(); err != nil {
+		return nil, err
+	}
 
-		ttl, err := redis.Int64(conn.Do("PTTL", key))
-		if err != nil {
-			return nil, err
+	// read every reply before returning, so the connection stays usable
+	var items []SnapshotItem
+	var firstErr error
+	for i, key := range keys {
+		if kinds[i] == "" {
+			continue
 		}
-		if ttl == -2 {
+		item := SnapshotItem{Key: key}
+		value, err := conn.Receive()
+		ttl, ttlErr := redis.Int64(conn.Receive())
+		if err == nil {
+			err = ttlErr
+		}
+		if err == nil {
+			if kinds[i] == "hash" {
+				item.Hash, err = redis.StringMap(value, nil)
+			} else {
+				var raw []byte
+				raw, err = redis.Bytes(value, nil)
+				item.String = base64.StdEncoding.EncodeToString(raw)
+			}
+		}
+		if errors.Is(err, redis.ErrNil) || ttl == -2 || (kinds[i] == "hash" && err == nil && len(item.Hash) == 0) {
+			// expired between the two round trips
+			continue
+		}
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("could not read key %s: %v", key, err)
+			}
 			continue
 		}
 		if ttl > 0 {
 			item.TTL = ttl
 		}
-
-		snapshot.Entries = append(snapshot.Entries, item)
+		items = append(items, item)
 	}
-
-	return snapshot, nil
+	return items, firstErr
 }
 
 // Load replaces all ddns data in Redis with the snapshot in one transaction,
@@ -185,6 +232,11 @@ func (r *RedisBackend) Load(snapshot *Snapshot) error {
 			conn.Send("PEXPIRE", item.Key, item.TTL)
 		}
 	}
+	conn.Send("SET", lastLoadKey, snapshot.Created.UTC().Format(time.RFC3339))
+	// a new history of the data: secondaries of this server need a full copy,
+	// and a secondary does not know which state of its primary it now holds
+	conn.Send("SET", syncEpochKey, newEpoch())
+	conn.Send("DEL", syncChangesKey, syncFloorKey, syncAppliedKey)
 
 	// Do returns the first error of a queued command, which makes Redis
 	// discard the whole transaction. Errors while executing are returned
@@ -201,8 +253,29 @@ func (r *RedisBackend) Load(snapshot *Snapshot) error {
 	return nil
 }
 
-// WriteSnapshot writes a snapshot as JSON, gzip compressed if compress is set.
-func WriteSnapshot(w io.Writer, snapshot *Snapshot, compress bool) error {
+// decodeString returns the value of a string item.
+func decodeString(item SnapshotItem) ([]byte, error) {
+	value, err := base64.StdEncoding.DecodeString(item.String)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value of key %s: %v", item.Key, err)
+	}
+	return value, nil
+}
+
+// WriteSnapshot writes a snapshot as JSON, gzip compressed if compress is
+// set, and encrypted with passphrase unless it is empty.
+func WriteSnapshot(w io.Writer, snapshot *Snapshot, compress bool, passphrase string) error {
+	if passphrase != "" {
+		encrypted, err := encryptingWriter(w, passphrase)
+		if err != nil {
+			return err
+		}
+		if err := WriteSnapshot(encrypted, snapshot, compress, ""); err != nil {
+			return err
+		}
+		return encrypted.Close()
+	}
+
 	if compress {
 		gz := gzip.NewWriter(w)
 		if err := json.NewEncoder(gz).Encode(snapshot); err != nil {
@@ -213,9 +286,14 @@ func WriteSnapshot(w io.Writer, snapshot *Snapshot, compress bool) error {
 	return json.NewEncoder(w).Encode(snapshot)
 }
 
-// ReadSnapshot reads a snapshot written by WriteSnapshot, compressed or not.
-func ReadSnapshot(r io.Reader) (*Snapshot, error) {
-	buffered := bufio.NewReader(r)
+// ReadSnapshot reads a snapshot written by WriteSnapshot, compressed,
+// encrypted or not. Encrypted data needs the passphrase.
+func ReadSnapshot(r io.Reader, passphrase string) (*Snapshot, error) {
+	plain, err := decryptingReader(bufio.NewReader(r), passphrase)
+	if err != nil {
+		return nil, err
+	}
+	buffered := bufio.NewReader(plain)
 
 	var reader io.Reader = buffered
 	if magic, err := buffered.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {

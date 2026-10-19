@@ -1,5 +1,10 @@
 # docker-compose.override.yml for a secondary nameserver, see README.
-# It only answers DNS, from data synced from the primary with ddns-sync.sh.
+# It only answers DNS, from the data the primary pushes to it over HTTPS.
+# Encrypts backups, see README. Use the same passphrase on every server and
+# keep a copy elsewhere: backups cannot be restored without it. Generate one
+# with: openssl rand -base64 32
+x-backup-passphrase: &backup-passphrase ""         # <<< same as the primary
+
 services:
   ddns:
     environment:
@@ -7,12 +12,35 @@ services:
       DDNS_SOA_DOMAIN: ddns.example.net               # <<< same as the primary
       DDNS_NAMESERVERS: ddns.example.net,ns2.example.net  # <<< same as the primary
       DDNS_REPLICA: "true"
+      DDNS_SYNC_TOKEN: ...                            # <<< same as DDNS_SYNC_TOKEN of the primary
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
 
   powerdns:
     ports:
       - "53:53/udp"
       - "53:53/tcp"
 
+  backup:
+    environment:
+      DDNS_BACKUP_PASSPHRASE: *backup-passphrase
+
   redis:
     volumes:
       - "./.redis_mount:/data"
+
+  # HTTPS for the sync endpoint the primary pushes to
+  caddy:
+    restart: unless-stopped
+    image: caddy:2.11
+    depends_on:
+      - ddns
+    environment:
+      DDNS_FRONTEND_HOST: ddns:8080
+      DDNS_CADDY_DOMAIN: ns2.example.net              # <<< the secondary's name
+      DDNS_CADDY_TLS_EMAIL: changeme@example.net      # <<< INSERT EMAIL
+    volumes:
+      - "./caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "./.caddy_mount:/data"
+    ports:
+      - "80:80"
+      - "443:443"

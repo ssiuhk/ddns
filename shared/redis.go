@@ -137,8 +137,10 @@ func (r *RedisBackend) DeleteHost(name string) error {
 	conn := r.pool.Get()
 	defer conn.Close()
 
-	_, err := conn.Do("DEL", name)
-	return err
+	conn.Send("MULTI")
+	conn.Send("DEL", name)
+	sendRecord(conn, name)
+	return execOK(conn)
 }
 
 func (r *RedisBackend) SetHost(host *Host) error {
@@ -223,6 +225,7 @@ func (r *RedisBackend) sendHost(conn redis.Conn, host *Host) {
 	} else {
 		conn.Send("EXPIRE", host.Hostname, r.expirationSeconds)
 	}
+	sendRecord(conn, host.Hostname)
 }
 
 // execOK runs EXEC and returns the first error, including those of single
@@ -265,11 +268,11 @@ func (r *RedisBackend) SetAdminPasswordHash(hash string) error {
 	conn := r.pool.Get()
 	defer conn.Close()
 
-	if _, err := conn.Do("SET", adminPasswordKey, hash); err != nil {
-		return err
-	}
-	_, err := conn.Do("DEL", adminSessionSecretKey)
-	return err
+	conn.Send("MULTI")
+	conn.Send("SET", adminPasswordKey, hash)
+	conn.Send("DEL", adminSessionSecretKey)
+	sendRecord(conn, adminPasswordKey, adminSessionSecretKey)
+	return execOK(conn)
 }
 
 // AdminSessionSecret returns the key admin session cookies are signed with,
@@ -282,8 +285,14 @@ func (r *RedisBackend) AdminSessionSecret() ([]byte, error) {
 	if _, err := rand.Read(secret); err != nil {
 		return nil, err
 	}
-	if _, err := conn.Do("SET", adminSessionSecretKey, secret, "NX"); err != nil {
+	created, err := conn.Do("SET", adminSessionSecretKey, secret, "NX")
+	if err != nil {
 		return nil, err
+	}
+	if created != nil {
+		if err := doRecord(conn, adminSessionSecretKey); err != nil {
+			return nil, err
+		}
 	}
 
 	return redis.Bytes(conn.Do("GET", adminSessionSecretKey))
@@ -334,6 +343,9 @@ func (r *RedisBackend) AddDomainKey(zone string, key *DomainKey) (int, error) {
 	if _, err := conn.Do("HSET", dnssecKeysKey(zone), id, value); err != nil {
 		return -1, err
 	}
+	if err := doRecord(conn, dnssecKeysKey(zone), dnssecNextIDKey(zone)); err != nil {
+		return -1, err
+	}
 
 	return id, nil
 }
@@ -342,8 +354,10 @@ func (r *RedisBackend) RemoveDomainKey(zone string, id int) error {
 	conn := r.pool.Get()
 	defer conn.Close()
 
-	_, err := conn.Do("HDEL", dnssecKeysKey(zone), id)
-	return err
+	if _, err := conn.Do("HDEL", dnssecKeysKey(zone), id); err != nil {
+		return err
+	}
+	return doRecord(conn, dnssecKeysKey(zone))
 }
 
 func (r *RedisBackend) UpdateDomainKey(zone string, id int, update func(*DomainKey)) error {
@@ -364,8 +378,10 @@ func (r *RedisBackend) UpdateDomainKey(zone string, id int, update func(*DomainK
 	if value, err = json.Marshal(key); err != nil {
 		return err
 	}
-	_, err = conn.Do("HSET", dnssecKeysKey(zone), id, value)
-	return err
+	if _, err = conn.Do("HSET", dnssecKeysKey(zone), id, value); err != nil {
+		return err
+	}
+	return doRecord(conn, dnssecKeysKey(zone))
 }
 
 func (r *RedisBackend) GetAllDomainMetadata(zone string) (map[string][]string, error) {
@@ -394,14 +410,18 @@ func (r *RedisBackend) SetDomainMetadata(zone, kind string, values []string) err
 	defer conn.Close()
 
 	if len(values) == 0 {
-		_, err := conn.Do("HDEL", dnssecMetadataKey(zone), kind)
-		return err
+		if _, err := conn.Do("HDEL", dnssecMetadataKey(zone), kind); err != nil {
+			return err
+		}
+		return doRecord(conn, dnssecMetadataKey(zone))
 	}
 
 	value, err := json.Marshal(values)
 	if err != nil {
 		return err
 	}
-	_, err = conn.Do("HSET", dnssecMetadataKey(zone), kind, value)
-	return err
+	if _, err = conn.Do("HSET", dnssecMetadataKey(zone), kind, value); err != nil {
+		return err
+	}
+	return doRecord(conn, dnssecMetadataKey(zone))
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 )
 
 type Backend struct {
@@ -58,6 +58,12 @@ func (b *Backend) Run() error {
 	if b.config.Verbose {
 		r.Use(gin.Logger())
 	}
+
+	// for the container health check; ?max_age=10m on a secondary also fails
+	// when the data has not been synced for that long
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(shared.Health(b.hosts, shared.ParseMaxAge(c.Query("max_age"))))
+	})
 
 	r.POST("/dnsapi", func(c *gin.Context) {
 		var call rpcCall
