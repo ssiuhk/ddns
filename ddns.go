@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -40,13 +41,30 @@ func main() {
 		setupDNSSEC(redis)
 	}
 
+	var group errgroup.Group
+
 	if serviceConfig.Replica {
-		// a secondary only answers DNS from the data synced from the primary
-		lookup := backend.NewHostLookup(serviceConfig, redis)
-		log.Fatal(backend.NewBackend(serviceConfig, lookup, redis).Run())
+		// a secondary only answers DNS from the data synced from the primary,
+		// and accepts the data its primary pushes
+		group.Go(func() error {
+			lookup := backend.NewHostLookup(serviceConfig, redis)
+			return backend.NewBackend(serviceConfig, lookup, redis).Run()
+		})
+		if serviceConfig.SyncToken != "" {
+			group.Go(func() error {
+				return frontend.ReplicaRouter(serviceConfig, redis).Run(serviceConfig.ListenFrontend)
+			})
+		} else {
+			log.Print("DDNS_SYNC_TOKEN is not set, so the primary can not push its data to this server")
+		}
+		log.Fatal(group.Wait())
 	}
 
-	var group errgroup.Group
+	var pusher *shared.Pusher
+	if len(serviceConfig.SyncTo) > 0 {
+		pusher = shared.NewPusher(redis, serviceConfig.SyncTo, serviceConfig.SyncToken)
+		group.Go(func() error { return pusher.Run(context.Background()) })
+	}
 
 	group.Go(func() error {
 		lookup := backend.NewHostLookup(serviceConfig, redis)
@@ -55,7 +73,11 @@ func main() {
 
 	group.Go(func() error {
 		adminPanel := admin.New(serviceConfig, redis, frontend.ExtractRemoteAddr)
-		return frontend.NewFrontend(serviceConfig, redis, adminPanel).Run()
+		f := frontend.NewFrontend(serviceConfig, redis, adminPanel)
+		if pusher != nil {
+			f.SyncStatus = pusher.Status
+		}
+		return f.Run()
 	})
 
 	if err := group.Wait(); err != nil {

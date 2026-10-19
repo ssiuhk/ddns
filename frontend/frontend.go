@@ -19,6 +19,9 @@ type Frontend struct {
 	hosts         shared.HostBackend
 	admin         *admin.Admin
 	registrations *shared.RateLimiter
+
+	// SyncStatus reports the pushes to the secondaries, nil without any
+	SyncStatus func() map[string]shared.SyncStatus
 }
 
 func NewFrontend(config *shared.Config, hosts shared.HostBackend, adminPanel *admin.Admin) *Frontend {
@@ -69,9 +72,7 @@ func (f *Frontend) Router() *gin.Engine {
 		})
 	})
 
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(shared.Health(f.hosts, 0))
-	})
+	r.GET("/healthz", f.health)
 
 	r.GET("/new/:hostname", f.register)
 	r.GET("/nic/update", f.dynDNS2Update)
@@ -91,6 +92,25 @@ func (f *Frontend) Router() *gin.Engine {
 	})
 
 	return r
+}
+
+// health reports the state of the primary. With secondaries, max_age (like
+// 5m) also requires each of them to have been synced within that time.
+func (f *Frontend) health(c *gin.Context) {
+	code, body := shared.Health(f.hosts, 0)
+	if f.SyncStatus != nil {
+		status := f.SyncStatus()
+		body["sync"] = status
+		if maxAge := shared.ParseMaxAge(c.Query("max_age")); maxAge > 0 && code == 200 {
+			for _, target := range status {
+				if time.Since(target.LastSuccess) > maxAge {
+					body["status"] = "stale"
+					code = 503
+				}
+			}
+		}
+	}
+	c.JSON(code, body)
 }
 
 func (f *Frontend) register(c *gin.Context) {

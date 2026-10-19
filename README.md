@@ -247,41 +247,44 @@ demand. The Redis instance has to be dedicated to `ddns`, as hosts are stored as
 ### Secondary nameserver
 
 A second server can answer for the zone as well, so DNS keeps working when one of them is down. The primary keeps
-taking all updates and runs the admin panel; the secondary only answers DNS from a copy of the primary's data.
+taking all updates and runs the admin panel; the secondary only answers DNS from a copy of the primary's data, which
+the primary pushes to it over HTTPS whenever something changes.
 
 1. Give the secondary a name, e.g. `ns2.example.net`, with an `A`/`AAAA` record, and add it as a second `NS` record
    for `d.example.net` in the parent zone next to `ddns.example.net`.
-2. On the primary, set `DDNS_NAMESERVERS: ddns.example.net,ns2.example.net` in `docker-compose.override.yml` and run
-   `docker compose --project-name ddns up -d` again, so the zone announces both nameservers.
+2. Create a sync token both servers share, e.g. with `openssl rand -hex 32`.
 3. On the secondary, clone the repository and use
    [the secondary sample](./docker/docker-compose.override.yml.secondary.sample) as `docker-compose.override.yml`,
-   with the same domain settings as the primary. `DDNS_REPLICA: "true"` makes it serve DNS only: no web frontend, no
-   admin panel and no DNSSEC key of its own. Start it with `docker compose --project-name ddns up -d --build`.
-4. On the primary, copy the data over SSH. This needs a key based SSH login to a user on the secondary that may run
-   `docker compose`:
+   with the same domain settings as the primary, the sync token and the secondary's own name for Caddy.
+   `DDNS_REPLICA: "true"` makes it serve DNS only: no admin panel, no DNSSEC key of its own, and on HTTPS only the
+   sync endpoint and the health check. Start it with `docker compose --project-name ddns up -d --build`.
+4. On the primary, set in `docker-compose.override.yml`:
 
-   ```
-   docker/ddns-sync.sh deploy@ns2.example.net /opt/ddns/docker
-   ```
-
-   It dumps the data on the primary and loads it on the secondary, replacing what was there. Both servers then sign
-   with the same DNSSEC key, so the DS record stays the same. With a [backup passphrase](#encryption) set, the data is
-   encrypted on the primary and decrypted on the secondary, which needs the same passphrase in its
-   `docker-compose.override.yml`.
-5. Keep the secondary current by running the sync every minute from cron on the primary:
-
-   ```
-   * * * * * flock -n /tmp/ddns-sync.lock /opt/ddns/docker/ddns-sync.sh deploy@ns2.example.net /opt/ddns/docker
+   ```yaml
+   DDNS_NAMESERVERS: ddns.example.net,ns2.example.net
+   DDNS_SYNC_TO: https://ns2.example.net
+   DDNS_SYNC_TOKEN: <the sync token>
    ```
 
-   Address changes then reach the secondary within a minute, and hosts expire on both servers at the same time.
+   and run `docker compose --project-name ddns up -d` again.
 
-Run the first sync before the secondary's `NS` record goes live, as the secondary has no DNSSEC key until then.
+That is all: the primary checks its data every 5 seconds, pushes it to the secondary when it changed and at least
+once a minute otherwise, and logs `Synced N keys to https://ns2.example.net`. A secondary that was down catches up as
+soon as it is back. Both servers sign with the same DNSSEC key, so the DS record stays the same, and hosts expire on
+both at the same time. Several secondaries can be listed in `DDNS_SYNC_TO`, separated by commas.
+
+Wait for the first `Synced` line before the secondary's `NS` record goes live, as the secondary has no DNSSEC key
+until then. The secondary refuses data that is empty or older than what it has, and anything without the token.
+
+`docker/ddns-sync.sh` still copies the data once over SSH, e.g. to seed a secondary by hand.
 
 ### Health checks
 
 `https://ddns.example.net/healthz` answers `{"status":"ok"}` with status 200 while `ddns` can reach Redis, and 503
 otherwise, for uptime monitors. Docker checks the same on every server through the internal backend port, so
-`docker compose ps` shows `healthy`. A secondary also reports when its data was taken (`data_from`); inside the
-container, `wget -qO- "http://127.0.0.1:8053/healthz?max_age=10m"` fails when the last sync is older than 10 minutes.
-Monitor a secondary from outside with a DNS query, for example for one of your hosts.
+`docker compose ps` shows `healthy`.
+
+With secondaries, the primary's health check lists the last successful push and the last error for each of them
+under `sync`, and `https://ddns.example.net/healthz?max_age=5m` answers 503 when one of them has not been synced for
+5 minutes. A secondary reports when its data was taken (`data_from`), and
+`https://ns2.example.net/healthz?max_age=5m` answers 503 when its data is older than that.

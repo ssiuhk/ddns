@@ -28,6 +28,13 @@ type Config struct {
 
 	nameserverList string
 
+	// Sync: a primary pushes its data to the SyncTo URLs of its secondaries,
+	// which accept it with the same SyncToken.
+	SyncTo    []string
+	SyncToken string
+
+	syncToList string
+
 	// Admin panel
 	PublicURL          string
 	AdminEmail         string
@@ -59,6 +66,12 @@ func (c *Config) Initialize() {
 
 	flag.BoolVar(&c.Replica, "replica", os.Getenv("DDNS_REPLICA") == "true",
 		"Run as a secondary server: only serve DNS from data synced from the primary (env DDNS_REPLICA)")
+
+	flag.StringVar(&c.syncToList, "sync-to", os.Getenv("DDNS_SYNC_TO"),
+		"Comma separated URLs of the secondaries the primary pushes its data to, e.g. https://ns2.example.net (env DDNS_SYNC_TO)")
+
+	flag.StringVar(&c.SyncToken, "sync-token", os.Getenv("DDNS_SYNC_TOKEN"),
+		"Shared secret of the primary and its secondaries for syncing, at least 32 characters (env DDNS_SYNC_TOKEN)")
 
 	flag.StringVar(&c.Registration, "registration", envOr("DDNS_REGISTRATION", "open"),
 		"open: anyone can register hosts on the frontend; closed: only the admin panel creates hosts (env DDNS_REGISTRATION)")
@@ -114,6 +127,25 @@ func (c *Config) Validate() {
 	}
 	if len(c.Nameservers) == 0 {
 		c.Nameservers = []string{c.SOAFqdn}
+	}
+
+	c.SyncTo = nil
+	for _, target := range strings.Split(c.syncToList, ",") {
+		if target = strings.TrimSuffix(strings.TrimSpace(target), "/"); target != "" {
+			if u, err := url.Parse(target); err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+				log.Fatalf("--sync-to has to list URLs like https://ns2.example.net, not %q", target)
+			}
+			c.SyncTo = append(c.SyncTo, target)
+		}
+	}
+	if c.Replica && len(c.SyncTo) > 0 {
+		log.Fatal("--sync-to is set on the primary, not on a secondary")
+	}
+	if (c.Replica || len(c.SyncTo) > 0) && c.SyncToken != "" && len(c.SyncToken) < 32 {
+		log.Fatal("--sync-token has to be at least 32 characters, e.g. from: openssl rand -hex 32")
+	}
+	if len(c.SyncTo) > 0 && c.SyncToken == "" {
+		log.Fatal("--sync-to needs --sync-token, the same on the primary and its secondaries")
 	}
 
 	c.PublicURL = strings.TrimSuffix(c.PublicURL, "/")

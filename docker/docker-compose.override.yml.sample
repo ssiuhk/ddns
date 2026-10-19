@@ -14,8 +14,11 @@ services:
       # "closed" leaves creating hosts to the admin panel
       DDNS_REGISTRATION: open
       DDNS_REGISTRATIONS_PER_HOUR: 5
-      # With a secondary server, list every nameserver of the zone (README)
+      # With a secondary server, list every nameserver of the zone and where
+      # to push the data to, with a token both share (README)
       # DDNS_NAMESERVERS: ddns.example.net,ns2.example.net
+      # DDNS_SYNC_TO: https://ns2.example.net
+      # DDNS_SYNC_TOKEN: ...                         # openssl rand -hex 32
       # Optional: sign in to the admin panel with Google, see README
       # DDNS_GOOGLE_CLIENT_ID: ...
       # DDNS_GOOGLE_CLIENT_SECRET: ...

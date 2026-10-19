@@ -82,7 +82,9 @@ func loadData(args []string) int {
 	flags.Parse(args)
 
 	var r io.Reader = os.Stdin
-	if *input != "-" {
+	if *input == "-" {
+		fmt.Fprintln(os.Stderr, "Reading the dump from standard input; to restore the newest backup use --input /backups")
+	} else {
 		path := *input
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			if path, err = shared.LatestBackup(path); err != nil {
@@ -113,7 +115,8 @@ func loadData(args []string) int {
 		return 1
 	}
 	if len(snapshot.Entries) == 0 && !*allowEmpty {
-		fmt.Fprintln(os.Stderr, "The dump is empty, refusing to delete all data (use --allow-empty to load it anyway)")
+		fmt.Fprintf(os.Stderr, "The dump taken at %s has no data, refusing to delete everything (use --allow-empty to load it anyway)\n",
+			snapshot.Created.Format(time.RFC3339))
 		return 1
 	}
 
@@ -155,10 +158,17 @@ func backupData(args []string) int {
 	redis := shared.NewRedisBackend(&shared.Config{RedisHost: *redisHost})
 	defer redis.Close()
 
+	log.Printf("Backing up the ddns data in Redis at %s to %s", *redisHost, *dir)
+
 	run := func() error {
 		snapshot, err := redis.Dump()
 		if err != nil {
-			return fmt.Errorf("could not read the data from Redis: %v", err)
+			return fmt.Errorf("could not read the data from Redis at %s: %v", *redisHost, err)
+		}
+		if len(snapshot.Entries) == 0 {
+			// an empty backup would become the newest one, which a restore picks
+			return fmt.Errorf("Redis at %s has no ddns data, not writing an empty backup; "+
+				"check that DDNS_REDIS_HOST of the backup service is the Redis of the ddns service", *redisHost)
 		}
 
 		now := time.Now()
