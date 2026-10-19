@@ -165,7 +165,7 @@ Each run does one step and says what to do before the next one:
 3. An hour later, the last run removes the old key. Then remove the old DS record at your registrar if it is still
    there; a parent that reads CDS records removes it by itself.
 
-On a setup with a secondary, the sync carries every step over to it within a minute.
+On a setup with a secondary, the sync carries every step over to it within seconds.
 
 DNSSEC can be turned off with `DDNS_DNSSEC: "false"` in the `ddns` environment. Remove the DS record from the parent
 zone first, or validating resolvers will reject the then unsigned answers.
@@ -268,15 +268,22 @@ the primary pushes to it over HTTPS whenever something changes.
 
    and run `docker compose --project-name ddns up -d` again.
 
-That is all: the primary checks its data every 5 seconds, pushes it to the secondary when it changed and at least
-once a minute otherwise, and logs `Synced N keys to https://ns2.example.net, verified`. After loading, the secondary
-reads its data back and answers with a checksum of it; the primary counts a push as done only when that checksum and
-the number of keys match what it sent, and otherwise pushes again on its next check. A secondary that was down catches up as
-soon as it is back. Both servers sign with the same DNSSEC key, so the DS record stays the same, and hosts expire on
-both at the same time. Several secondaries can be listed in `DDNS_SYNC_TO`, separated by commas.
+That is all. The primary first sends the secondary a full copy and logs `Sent all N keys to https://ns2.example.net,
+verified`. After that it only sends what changed: every write on the primary records the keys it changed, and every
+2 seconds the primary sends the secondary the changed and deleted keys since the state the secondary holds, logging
+`Sent N changed keys`. With 100,000 hosts, a single update reaches the secondary in about 2 seconds, and a full copy
+takes a few seconds. When nothing changes, an empty update goes out once a minute, so a broken sync still shows up.
 
-Wait for the first `Synced` line before the secondary's `NS` record goes live, as the secondary has no DNSSEC key
-until then. The secondary refuses data that is empty or older than what it has, and anything without the token.
+Every push is checked: the secondary writes the changes in one transaction, reads the keys back and answers with a
+checksum of them, and the primary counts the push as done only when that checksum and the number of keys match what
+it sent. Every 10 minutes both servers also compare a checksum of all their data. The secondary gets a full copy
+instead of changes when it is new, when its data does not match, when a dump was loaded on either server, or when it
+was down for so long that more than a million keys changed meanwhile. A secondary that was down catches up as soon as
+it is back. Both servers sign with the same DNSSEC key, so the DS record stays the same, and hosts expire on both at
+the same time. Several secondaries can be listed in `DDNS_SYNC_TO`, separated by commas.
+
+Wait for the first `Sent all` line before the secondary's `NS` record goes live, as the secondary has no DNSSEC key
+until then. The secondary refuses empty data, and anything without the token.
 
 `docker/ddns-sync.sh` still copies the data once over SSH, e.g. to seed a secondary by hand.
 
@@ -286,7 +293,8 @@ until then. The secondary refuses data that is empty or older than what it has, 
 otherwise, for uptime monitors. Docker checks the same on every server through the internal backend port, so
 `docker compose ps` shows `healthy`.
 
-With secondaries, the primary's health check lists for each of them under `sync` the last verified push, how many
-keys it confirmed (`verified_keys`) and the last error, and `https://ddns.example.net/healthz?max_age=5m` answers 503 when one of them has not been synced for
+With secondaries, the primary's health check lists for each of them under `sync` the last confirmed push
+(`last_success`), when all its data was last found to match (`last_verified`, with the number of keys in
+`verified_keys`) and the last error, and `https://ddns.example.net/healthz?max_age=5m` answers 503 when one of them has not been synced for
 5 minutes. A secondary reports when its data was taken (`data_from`), and
 `https://ns2.example.net/healthz?max_age=5m` answers 503 when its data is older than that.

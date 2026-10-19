@@ -18,6 +18,16 @@ jobs:
         image: redis:8-alpine
         ports:
           - 6379:6379
+      # a primary's and a secondary's, for the sync tests, which run at the
+      # same time as those of the Redis store
+      redis-primary:
+        image: redis:8-alpine
+        ports:
+          - 6380:6379
+      redis-secondary:
+        image: redis:8-alpine
+        ports:
+          - 6381:6379
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -28,6 +38,7 @@ jobs:
       - run: go test -v ./...
         env:
           DDNS_TEST_REDIS: localhost:6379
+          DDNS_TEST_SYNC_REDIS: localhost:6380,localhost:6381
 
   # Builds both images on every change and publishes them to the GitHub
   # Container Registry from master and version tags:

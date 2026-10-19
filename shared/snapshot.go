@@ -233,6 +233,10 @@ func (r *RedisBackend) Load(snapshot *Snapshot) error {
 		}
 	}
 	conn.Send("SET", lastLoadKey, snapshot.Created.UTC().Format(time.RFC3339))
+	// a new history of the data: secondaries of this server need a full copy,
+	// and a secondary does not know which state of its primary it now holds
+	conn.Send("SET", syncEpochKey, newEpoch())
+	conn.Send("DEL", syncChangesKey, syncFloorKey, syncAppliedKey)
 
 	// Do returns the first error of a queued command, which makes Redis
 	// discard the whole transaction. Errors while executing are returned
@@ -247,6 +251,15 @@ func (r *RedisBackend) Load(snapshot *Snapshot) error {
 		}
 	}
 	return nil
+}
+
+// decodeString returns the value of a string item.
+func decodeString(item SnapshotItem) ([]byte, error) {
+	value, err := base64.StdEncoding.DecodeString(item.String)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value of key %s: %v", item.Key, err)
+	}
+	return value, nil
 }
 
 // WriteSnapshot writes a snapshot as JSON, gzip compressed if compress is
