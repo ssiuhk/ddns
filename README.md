@@ -269,7 +269,9 @@ the primary pushes to it over HTTPS whenever something changes.
    and run `docker compose --project-name ddns up -d` again.
 
 That is all: the primary checks its data every 5 seconds, pushes it to the secondary when it changed and at least
-once a minute otherwise, and logs `Synced N keys to https://ns2.example.net`. A secondary that was down catches up as
+once a minute otherwise, and logs `Synced N keys to https://ns2.example.net, verified`. After loading, the secondary
+reads its data back and answers with a checksum of it; the primary counts a push as done only when that checksum and
+the number of keys match what it sent, and otherwise pushes again on its next check. A secondary that was down catches up as
 soon as it is back. Both servers sign with the same DNSSEC key, so the DS record stays the same, and hosts expire on
 both at the same time. Several secondaries can be listed in `DDNS_SYNC_TO`, separated by commas.
 
@@ -284,7 +286,7 @@ until then. The secondary refuses data that is empty or older than what it has, 
 otherwise, for uptime monitors. Docker checks the same on every server through the internal backend port, so
 `docker compose ps` shows `healthy`.
 
-With secondaries, the primary's health check lists the last successful push and the last error for each of them
-under `sync`, and `https://ddns.example.net/healthz?max_age=5m` answers 503 when one of them has not been synced for
+With secondaries, the primary's health check lists for each of them under `sync` the last verified push, how many
+keys it confirmed (`verified_keys`) and the last error, and `https://ddns.example.net/healthz?max_age=5m` answers 503 when one of them has not been synced for
 5 minutes. A secondary reports when its data was taken (`data_from`), and
 `https://ns2.example.net/healthz?max_age=5m` answers 503 when its data is older than that.

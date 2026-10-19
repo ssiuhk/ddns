@@ -21,11 +21,21 @@ type Dumper interface {
 	Dump() (*Snapshot, error)
 }
 
+// SyncResult is a secondary's answer to a push: what it has stored after
+// loading the data, read back from its Redis.
+type SyncResult struct {
+	Keys        int    `json:"keys"`
+	Fingerprint string `json:"fingerprint"`
+}
+
 // SyncStatus is the state of pushing to one secondary.
 type SyncStatus struct {
-	LastSuccess time.Time `json:"last_success,omitzero"`
-	LastError   string    `json:"last_error,omitempty"`
-	LastErrorAt time.Time `json:"last_error_at,omitzero"`
+	// LastSuccess is when the secondary last confirmed it stores exactly
+	// the primary's data, VerifiedKeys how many keys that was.
+	LastSuccess  time.Time `json:"last_success,omitzero"`
+	VerifiedKeys int       `json:"verified_keys"`
+	LastError    string    `json:"last_error,omitempty"`
+	LastErrorAt  time.Time `json:"last_error_at,omitzero"`
 
 	pushed string // fingerprint of the data last pushed
 }
@@ -99,7 +109,12 @@ func (p *Pusher) PushOnce(ctx context.Context) {
 			}
 			body = buffer.Bytes()
 		}
-		if err := p.push(ctx, target, body); err != nil {
+		result, err := p.push(ctx, target, body)
+		if err == nil && (result.Fingerprint != fingerprint || result.Keys != len(snapshot.Entries)) {
+			// e.g. keys that expired in between; the next check pushes again
+			err = fmt.Errorf("%s stores %d keys after loading that do not match the %d sent", target, result.Keys, len(snapshot.Entries))
+		}
+		if err != nil {
 			p.failed(target, err)
 			continue
 		}
@@ -107,24 +122,28 @@ func (p *Pusher) PushOnce(ctx context.Context) {
 	}
 }
 
-func (p *Pusher) push(ctx context.Context, target string, body []byte) error {
+func (p *Pusher) push(ctx context.Context, target string, body []byte) (*SyncResult, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target+SyncPath, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+p.Token)
 	request.Header.Set("Content-Type", "application/octet-stream")
 
 	response, err := p.Client.Do(request)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 512))
-		return fmt.Errorf("%s answered %s: %s", target, response.Status, bytes.TrimSpace(message))
+		return nil, fmt.Errorf("%s answered %s: %s", target, response.Status, bytes.TrimSpace(message))
 	}
-	return nil
+	result := &SyncResult{}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(result); err != nil || result.Fingerprint == "" {
+		return nil, fmt.Errorf("%s did not confirm what it stored, update ddns there to the same version", target)
+	}
+	return result, nil
 }
 
 func (p *Pusher) state(target string) *SyncStatus {
@@ -162,9 +181,10 @@ func (p *Pusher) succeeded(target, fingerprint string, keys int) {
 		log.Printf("Syncing to %s works again", target)
 	}
 	if state.pushed != fingerprint {
-		log.Printf("Synced %d keys to %s", keys, target)
+		log.Printf("Synced %d keys to %s, verified", keys, target)
 	}
 	state.pushed = fingerprint
+	state.VerifiedKeys = keys
 	state.LastSuccess = time.Now().UTC()
 	state.LastError = ""
 	state.LastErrorAt = time.Time{}

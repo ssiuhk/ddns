@@ -3,6 +3,7 @@ package frontend
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,8 @@ type syncStore struct {
 	snapshot *shared.Snapshot
 	loads    int
 	loaded   time.Time
+	// lose drops the last key on loading, like a broken secondary
+	lose bool
 }
 
 func (s *syncStore) Dump() (*shared.Snapshot, error) {
@@ -35,6 +38,11 @@ func (s *syncStore) Dump() (*shared.Snapshot, error) {
 func (s *syncStore) Load(snapshot *shared.Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lose && len(snapshot.Entries) > 0 {
+		copied := *snapshot
+		copied.Entries = copied.Entries[:len(copied.Entries)-1]
+		snapshot = &copied
+	}
 	s.snapshot = snapshot
 	s.loads++
 	s.loaded = snapshot.Created
@@ -89,7 +97,7 @@ func TestSyncEndpoint(t *testing.T) {
 	newer := snapshotWith("pi", "nas")
 	code, text := postSync(t, server.URL, testSyncToken, newer)
 	assert.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "Loaded 2 keys\n", text)
+	assert.Equal(t, fmt.Sprintf(`{"keys":2,"fingerprint":"%s"}`, shared.Fingerprint(newer)), text)
 
 	older := snapshotWith("old")
 	older.Created = newer.Created.Add(-time.Minute)
@@ -126,7 +134,28 @@ func TestPusherPushesChangesAndHeartbeats(t *testing.T) {
 
 	status := pusher.Status()[server.URL]
 	assert.NotZero(t, status.LastSuccess)
+	assert.Equal(t, 2, status.VerifiedKeys)
 	assert.Empty(t, status.LastError)
+}
+
+func TestPusherNoticesASecondaryThatLostData(t *testing.T) {
+	secondary, server := newSecondary(t)
+	secondary.lose = true
+	primary := &syncStore{snapshot: snapshotWith("pi", "nas")}
+
+	pusher := shared.NewPusher(primary, []string{server.URL}, testSyncToken)
+	pusher.Heartbeat = time.Hour
+	pusher.PushOnce(context.Background())
+
+	status := pusher.Status()[server.URL]
+	assert.Zero(t, status.LastSuccess)
+	assert.Contains(t, status.LastError, "stores 1 keys after loading that do not match the 2 sent")
+
+	// not counted as synced, so the next check pushes again
+	secondary.lose = false
+	pusher.PushOnce(context.Background())
+	assert.Equal(t, 2, secondary.loads)
+	assert.Equal(t, 2, pusher.Status()[server.URL].VerifiedKeys)
 }
 
 func TestPusherReportsFailures(t *testing.T) {

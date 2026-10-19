@@ -16,6 +16,7 @@ const maxSyncSize = 64 << 20
 
 // SyncStore is where a secondary loads the data pushed by its primary.
 type SyncStore interface {
+	shared.Dumper
 	Load(*shared.Snapshot) error
 	LastLoad() (time.Time, error)
 }
@@ -78,6 +79,14 @@ func syncHandler(token string, store SyncStore) gin.HandlerFunc {
 			c.String(http.StatusInternalServerError, "Could not load the data: %v\n", err)
 			return
 		}
-		c.String(http.StatusOK, "Loaded %d keys\n", len(snapshot.Entries))
+
+		// read back what is stored now, so the primary can check that every
+		// key arrived and was loaded as sent
+		stored, err := store.Dump()
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Loaded the data but could not read it back: %v\n", err)
+			return
+		}
+		c.JSON(http.StatusOK, shared.SyncResult{Keys: len(stored.Entries), Fingerprint: shared.Fingerprint(stored)})
 	}
 }
