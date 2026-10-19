@@ -59,14 +59,17 @@ func NewPusher(store Dumper, targets []string, token string) *Pusher {
 
 // Run pushes until ctx is done.
 func (p *Pusher) Run(ctx context.Context) error {
-	ticker := time.NewTicker(p.Poll)
-	defer ticker.Stop()
 	for {
+		start := time.Now()
 		p.PushOnce(ctx)
+
+		// with a lot of data, leave Redis and the CPU mostly idle between
+		// checks: at least three times as long as the check took
+		wait := max(p.Poll, 3*time.Since(start))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-time.After(wait):
 		}
 	}
 }
