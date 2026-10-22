@@ -131,6 +131,12 @@ arm64: set `image: ghcr.io/ssiuhk/ddns:latest` for the `ddns` and `backup` servi
 `image: ghcr.io/ssiuhk/ddns-powerdns:latest` for `powerdns` in `docker-compose.override.yml`, then run
 `docker compose --project-name ddns pull` followed by `docker compose --project-name ddns up -d`.
 
+CI also publishes the images to Docker Hub, as `<user>/ddns` and `<user>/ddns-powerdns`, once the repository has two
+secrets (Settings → Secrets and variables → Actions): `DOCKERHUB_USERNAME`, the Docker Hub account or organisation, and
+`DOCKERHUB_TOKEN`, an access token created under Account settings → Personal access tokens on Docker Hub with Read &
+Write access. Without them, CI only publishes to ghcr.io. Both registries get the same tags: `latest` from `master`,
+and `1.2.0` and `1.2` from a `v1.2.0` tag or release.
+
 ### DNSSEC
 
 The zone is signed with DNSSEC by default. On its first start `ddns` creates an ECDSA P-256 (algorithm 13) signing
