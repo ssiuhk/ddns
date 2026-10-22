@@ -1,9 +1,8 @@
 # `ddns` - Dynamic DNS
 
-[![CircleCI](https://img.shields.io/circleci/build/github/pboehm/ddns?style=flat)](https://circleci.com/github/pboehm/ddns)
-[![Docker Image Size (tag)](https://img.shields.io/docker/image-size/pboehm/ddns/latest?logo=Docker)](https://hub.docker.com/r/pboehm/ddns)
-[![Docker Pulls](https://img.shields.io/docker/pulls/pboehm/ddns?logo=Docker)](https://hub.docker.com/r/pboehm/ddns)
-[![GitHub](https://img.shields.io/github/license/pboehm/ddns?style=flat)](https://github.com/pboehm/ddns)
+[![CI](https://github.com/ssiuhk/ddns/actions/workflows/ci.yml/badge.svg)](https://github.com/ssiuhk/ddns/actions/workflows/ci.yml)
+[![Container image](https://img.shields.io/badge/image-ghcr.io%2Fssiuhk%2Fddns-blue?logo=docker)](https://github.com/ssiuhk/ddns/pkgs/container/ddns)
+[![GitHub](https://img.shields.io/github/license/ssiuhk/ddns?style=flat)](https://github.com/ssiuhk/ddns)
 
 
 A self-hosted Dynamic DNS solution similar to DynDNS or NO-IP based on the
@@ -30,7 +29,42 @@ or you can host it yourself as described below.
 an URL periodically through `curl`. Hosts that haven't been updated for 10 days will
 be automatically removed. This can be configured in your own instance.
 
-An API similar to DynDNS/NO-IP has not been implemented yet.
+Registering a host returns a token. Send it in a header, which keeps it out of access logs:
+
+```
+curl -H "Authorization: Bearer <token>" https://ddns.example.net/update/<hostname>
+```
+
+The older form with the token in the URL, `https://ddns.example.net/update/<hostname>/<token>`, keeps
+working for existing clients. Tokens are 256 bit random values; hosts registered before this change keep their
+old, weaker token until you generate a new one in the admin panel.
+
+A host can have an IPv4 and an IPv6 address at the same time, served as its A and AAAA record. An update
+sets the address of the family it comes from and keeps the other one. To set addresses explicitly, for example
+both at once, add `?myip=203.0.113.10,2001:db8::1` to the update URL.
+
+### Routers and ddclient (DynDNS2 protocol)
+
+`ddns` also speaks the DynDNS2 update protocol used by routers (Fritz!Box, UniFi, pfSense, OPNsense) and
+[ddclient](https://ddclient.net/). Configure a "custom" or "DynDNS2" provider with:
+
+* Server / update URL: `https://ddns.example.net/nic/update?hostname=<domain>&myip=<ipaddr>,<ip6addr>`
+  (the placeholders differ per router; leave out `myip` to use the address the request comes from)
+* Username: the hostname, for example `myhost` or `myhost.d.example.net`
+* Password: the token of the host
+
+For ddclient:
+
+```
+protocol=dyndns2
+server=ddns.example.net
+ssl=yes
+login=myhost
+password=<token>
+myhost.d.example.net
+```
+
+The answer is one line per host: `good <ip>`, `nochg <ip>`, `nohost`, `badauth` or `notfqdn`.
 
 ## Self-Hosting
 
@@ -38,9 +72,10 @@ An API similar to DynDNS/NO-IP has not been implemented yet.
 
 * A custom domain where the registrar allows setting `NS` records for subdomains. This is important because not all
   DNS providers support this.
-* A server with [docker](https://www.docker.com/) and [docker-compose](https://docs.docker.com/compose/) installed
+* A server with [docker](https://www.docker.com/) and the [docker compose](https://docs.docker.com/compose/) plugin installed
 * The following ports should be opened in the firewall:
   * `53/udp`
+  * `53/tcp`
   * `80/tcp`
   * `443/tcp`
 
@@ -63,11 +98,12 @@ to be made in a `docker-compose.override.yml` file
 
 #### Configuring the Setup
 
-The setup included in this repository contains all the components described above and uses
-[caddy](https://caddyserver.com/) as a web server, because it provides automatic HTTPS using Lets Encrypt.
+The setup included in this repository contains all the components described above
+([PowerDNS Authoritative Server](https://doc.powerdns.com/authoritative/) 5.1 with the remote backend, Redis and `ddns`)
+and uses [caddy](https://caddyserver.com/) 2 as a web server, because it provides automatic HTTPS using Lets Encrypt.
 
 ```
-git clone git@github.com:pboehm/ddns.git
+git clone git@github.com:ssiuhk/ddns.git
 cd ddns/docker
 cp docker-compose.override.yml.sample docker-compose.override.yml
 ```
@@ -78,10 +114,193 @@ Please adjust the settings in `docker-compose.override.yml` marked with the `#<<
 * insert your email address in lines marked with `# <<< INSERT EMAIL` which is required for getting certificates
   from Lets Encrypt
 
-Finally execute the following `docker-compose` command, which creates 4 containers in detached mode which are also
+By default anyone can register a host on the start page, at most 5 per address and hour. Set
+`DDNS_REGISTRATION: closed` to only create hosts in the [admin panel](#admin-panel), or change the limit with
+`DDNS_REGISTRATIONS_PER_HOUR` (0 for no limit).
+
+Finally execute the following `docker compose` command, which creates 4 containers in detached mode which are also
 started automatically after reboot. For updating an existing installation use the same command because it automatically
 rebuilds the containers.
 
 ```
-docker-compose --project-name ddns up -d --build
+docker compose --project-name ddns up -d --build
 ```
+
+Instead of building locally, you can use the images that CI publishes for every change on `master`, for amd64 and
+arm64: set `image: ghcr.io/ssiuhk/ddns:latest` for the `ddns` and `backup` services and
+`image: ghcr.io/ssiuhk/ddns-powerdns:latest` for `powerdns` in `docker-compose.override.yml`, then run
+`docker compose --project-name ddns pull` followed by `docker compose --project-name ddns up -d`.
+
+CI also publishes the images to Docker Hub, as `<user>/ddns` and `<user>/ddns-powerdns`, once the repository has two
+secrets (Settings → Secrets and variables → Actions): `DOCKERHUB_USERNAME`, the Docker Hub account or organisation, and
+`DOCKERHUB_TOKEN`, an access token created under Account settings → Personal access tokens on Docker Hub with Read &
+Write access. Without them, CI only publishes to ghcr.io. Both registries get the same tags: `latest` from `master`,
+and `1.2.0` and `1.2` from a `v1.2.0` tag or release.
+
+### DNSSEC
+
+The zone is signed with DNSSEC by default. On its first start `ddns` creates an ECDSA P-256 (algorithm 13) signing
+key for the zone, stores it in Redis next to the hosts, and logs the DS record the parent zone needs:
+
+```
+docker compose --project-name ddns logs ddns | grep "DS record"
+```
+
+PowerDNS signs every answer on the fly and uses NSEC3 in narrow mode for denial of existence, as hosts come and go
+at any time. To complete the chain of trust, add the logged DS record for `d.example.net` to the parent zone
+`example.net` at your DNS provider. Providers that support [RFC 8078](https://www.rfc-editor.org/rfc/rfc8078) can
+pick it up automatically from the published CDS record. Until the DS record is in place, resolvers treat the zone as
+unsigned, so nothing breaks in the meantime.
+
+Make sure Redis data is persisted (the `.redis_mount` volume of the sample setup), as losing the key means the DS
+record in the parent zone no longer matches and validating resolvers will fail to resolve your hosts.
+
+`ddns dnssec status` shows the keys and their DS records. To replace the signing key, for example once a year or
+if it may have leaked, run the rollover on the primary:
+
+```
+docker compose --project-name ddns exec ddns ddns dnssec rollover
+```
+
+Each run does one step and says what to do before the next one:
+
+1. A new key is added and signs next to the old one. After an hour, add the new DS record it prints at your registrar,
+   next to the old one or replacing it. A parent that reads CDS records adds it by itself.
+2. Once the parent's DS TTL (usually a day) has passed, the next run checks that resolvers see the new DS record, then
+   lets the old key stop signing. The old DS record may still be at the parent, which is fine.
+3. An hour later, the last run removes the old key. Then remove the old DS record at your registrar if it is still
+   there; a parent that reads CDS records removes it by itself.
+
+On a setup with a secondary, the sync carries every step over to it within seconds.
+
+DNSSEC can be turned off with `DDNS_DNSSEC: "false"` in the `ddns` environment. Remove the DS record from the parent
+zone first, or validating resolvers will reject the then unsigned answers.
+
+### Admin panel
+
+`ddns` has a control panel for a single administrator at `https://ddns.example.net/admin`, where you can list, show,
+create, update and delete hosts, mark hosts that should never expire, generate new update tokens, and see the DS
+record of the zone.
+
+#### Password
+
+Set the admin password from the running container. The same command resets it, which also signs out every open admin
+session:
+
+```
+docker compose --project-name ddns exec ddns ddns set-admin-password
+```
+
+It asks for the password twice (at least 10 characters). To set it from a script, pipe it in with
+`--password-stdin`:
+
+```
+echo "$PASSWORD" | docker compose --project-name ddns exec -T ddns ddns set-admin-password --password-stdin
+```
+
+Only a bcrypt hash of the password is stored, in Redis. After 10 failed attempts from one address, logins from it are
+refused for 15 minutes.
+
+#### Sign in with Google (optional)
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials) create an OAuth client ID of type
+   "Web application" with the authorized redirect URI `https://ddns.example.net/admin/login/google/callback`.
+2. Set `DDNS_GOOGLE_CLIENT_ID`, `DDNS_GOOGLE_CLIENT_SECRET` and `DDNS_ADMIN_EMAIL` (the only Google account allowed
+   to sign in) in the `ddns` environment of `docker-compose.override.yml`, next to `DDNS_PUBLIC_URL`.
+3. Run `docker compose --project-name ddns up -d` again.
+
+The password login stays available as long as a password is set, so you can always get in from the server.
+
+### Backups
+
+The `backup` service takes a compressed backup of all `ddns` data (hosts, DNSSEC keys and the admin password) every
+day into `docker/.backups` and deletes backups older than 180 days. It runs on every server, including secondaries.
+The backup files belong to root; work with them through the `backup` service, which has the directory mounted at
+`/backups`. To restore the newest backup, or a given one:
+
+```
+docker compose --project-name ddns exec backup ddns load --input /backups
+docker compose --project-name ddns exec backup ddns load --input /backups/ddns-backup-<time>.json.gz.age
+```
+
+To take a backup right away, for example before an upgrade:
+
+```
+docker compose --project-name ddns exec backup ddns backup --once
+```
+
+#### Encryption
+
+Backups contain the private DNSSEC key, so set a passphrase to encrypt them: fill in `x-backup-passphrase` at the top
+of `docker-compose.override.yml`, which passes it to the `ddns` and `backup` services as `DDNS_BACKUP_PASSPHRASE`.
+Generate one with `openssl rand -base64 32` and keep a copy outside the server, as backups cannot be restored without
+it. Use the same passphrase on a secondary.
+
+With a passphrase set, backups end in `.age` and dumps are encrypted as well; `ddns load` decrypts them with the
+passphrase it finds. Instead of the environment, the passphrase can come from a file: `--passphrase-file <path>` on
+the `dump`, `load` and `backup` commands, or `DDNS_BACKUP_PASSPHRASE_FILE`. Encrypted files are standard
+[age](https://age-encryption.org) files, so they can also be read without `ddns`:
+
+```
+age -d ddns-backup-<time>.json.gz.age | gunzip
+```
+
+`ddns dump --plain` writes an unencrypted dump even with a passphrase set.
+
+Loading replaces all `ddns` data in Redis in one step. `ddns dump` writes the current data to stdout, for a backup on
+demand. The Redis instance has to be dedicated to `ddns`, as hosts are stored as top level keys.
+
+### Secondary nameserver
+
+A second server can answer for the zone as well, so DNS keeps working when one of them is down. The primary keeps
+taking all updates and runs the admin panel; the secondary only answers DNS from a copy of the primary's data, which
+the primary pushes to it over HTTPS whenever something changes.
+
+1. Give the secondary a name, e.g. `ns2.example.net`, with an `A`/`AAAA` record, and add it as a second `NS` record
+   for `d.example.net` in the parent zone next to `ddns.example.net`.
+2. Create a sync token both servers share, e.g. with `openssl rand -hex 32`.
+3. On the secondary, clone the repository and use
+   [the secondary sample](./docker/docker-compose.override.yml.secondary.sample) as `docker-compose.override.yml`,
+   with the same domain settings as the primary, the sync token and the secondary's own name for Caddy.
+   `DDNS_REPLICA: "true"` makes it serve DNS only: no admin panel, no DNSSEC key of its own, and on HTTPS only the
+   sync endpoint and the health check. Start it with `docker compose --project-name ddns up -d --build`.
+4. On the primary, set in `docker-compose.override.yml`:
+
+   ```yaml
+   DDNS_NAMESERVERS: ddns.example.net,ns2.example.net
+   DDNS_SYNC_TO: https://ns2.example.net
+   DDNS_SYNC_TOKEN: <the sync token>
+   ```
+
+   and run `docker compose --project-name ddns up -d` again.
+
+That is all. The primary first sends the secondary a full copy and logs `Sent all N keys to https://ns2.example.net,
+verified`. After that it only sends what changed: every write on the primary records the keys it changed, and every
+2 seconds the primary sends the secondary the changed and deleted keys since the state the secondary holds, logging
+`Sent N changed keys`. With 100,000 hosts, a single update reaches the secondary in about 2 seconds, and a full copy
+takes a few seconds. When nothing changes, an empty update goes out once a minute, so a broken sync still shows up.
+
+Every push is checked: the secondary writes the changes in one transaction, reads the keys back and answers with a
+checksum of them, and the primary counts the push as done only when that checksum and the number of keys match what
+it sent. Every 10 minutes both servers also compare a checksum of all their data. The secondary gets a full copy
+instead of changes when it is new, when its data does not match, when a dump was loaded on either server, or when it
+was down for so long that more than a million keys changed meanwhile. A secondary that was down catches up as soon as
+it is back. Both servers sign with the same DNSSEC key, so the DS record stays the same, and hosts expire on both at
+the same time. Several secondaries can be listed in `DDNS_SYNC_TO`, separated by commas.
+
+Wait for the first `Sent all` line before the secondary's `NS` record goes live, as the secondary has no DNSSEC key
+until then. The secondary refuses empty data, and anything without the token.
+
+`docker/ddns-sync.sh` still copies the data once over SSH, e.g. to seed a secondary by hand.
+
+### Health checks
+
+`https://ddns.example.net/healthz` answers `{"status":"ok"}` with status 200 while `ddns` can reach Redis, and 503
+otherwise, for uptime monitors. Docker checks the same on every server through the internal backend port, so
+`docker compose ps` shows `healthy`.
+
+With secondaries, the primary's health check lists for each of them under `sync` the last confirmed push
+(`last_success`), when all its data was last found to match (`last_verified`, with the number of keys in
+`verified_keys`) and the last error, and `https://ddns.example.net/healthz?max_age=5m` answers 503 when one of them has not been synced for
+5 minutes. A secondary reports when its data was taken (`data_from`), and
+`https://ns2.example.net/healthz?max_age=5m` answers 503 when its data is older than that.

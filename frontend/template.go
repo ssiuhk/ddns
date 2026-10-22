@@ -109,7 +109,7 @@ const indexTemplate string = `
             <div class="header">
                 <ul class="nav nav-pills pull-right">
                     <li class="active"><a href="#">Home</a></li>
-                    <li><a href="https://github.com/pboehm/ddns">
+                    <li><a href="https://github.com/ssiuhk/ddns">
                         <i class="fa fa-github fa-lg"></i> Code</a></li>
                 </ul>
                 <h3 class="text-muted">DDNS</h3>
@@ -123,6 +123,7 @@ const indexTemplate string = `
 
                 <hr />
 
+                {{if .registrationOpen}}
                 <form class="form-inline" role="form">
                     <div id="hostname_input" class="form-group">
                         <div class="input-group">
@@ -135,6 +136,9 @@ const indexTemplate string = `
                 <hr />
 
                 <input type="button" id="register" class="btn btn-primary disabled" value="Register Host" />
+                {{else}}
+                <p>Registration is closed. Ask the administrator of this server for a host under <code>{{.domain}}</code>.</p>
+                {{end}}
             </div>
 
             <div id="command_output"></div>
@@ -189,9 +193,14 @@ const indexTemplate string = `
 
                         var host = location.protocol + '//' + location.host;
 
-                        $("#command_output").append(
-                            "<pre>curl \"" + host +
-                            data.update_link + "\"</pre>");
+                        $("#command_output").empty().append(
+                            $("<p>").text("Update the address of " + data.hostname + " with:"),
+                            $("<pre>").text("curl -H \"Authorization: Bearer " + data.token + "\" \"" +
+                                host + "/update/" + data.hostname + "\""),
+                            $("<p>").text("Keep the token secret, it is only shown once."));
+                    }).fail(function(response) {
+                        var error = response.responseJSON ? response.responseJSON.error : "Could not register the host.";
+                        $("#command_output").empty().append($("<p class=\"text-danger\">").text(error));
                     })
                 });
             });

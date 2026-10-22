@@ -2,7 +2,7 @@ package backend
 
 import (
 	"errors"
-	"github.com/pboehm/ddns/shared"
+	"github.com/ssiuhk/ddns/shared"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -25,6 +25,21 @@ func (b *testHostBackend) SetHost(host *shared.Host) error {
 	return nil
 }
 
+func (b *testHostBackend) CreateHost(host *shared.Host) error {
+	if _, ok := b.hosts[host.Hostname]; ok {
+		return shared.ErrHostExists
+	}
+	return b.SetHost(host)
+}
+
+func (b *testHostBackend) UpdateHost(name string, update func(*shared.Host) error) (*shared.Host, error) {
+	host, err := b.GetHost(name)
+	if err != nil {
+		return nil, err
+	}
+	return host, update(host)
+}
+
 func buildLookup(domain string) (*shared.Config, *testHostBackend, *HostLookup) {
 	config := &shared.Config{
 		Verbose: false,
@@ -36,17 +51,23 @@ func buildLookup(domain string) (*shared.Config, *testHostBackend, *HostLookup) 
 		hosts: map[string]*shared.Host{
 			"www": {
 				Hostname: "www",
-				Ip:       "10.11.12.13",
+				IPv4:     "10.11.12.13",
 				Token:    "abcdef",
 			},
 			"v4": {
 				Hostname: "v4",
-				Ip:       "10.10.10.10",
+				IPv4:     "10.10.10.10",
 				Token:    "ghijkl",
+			},
+			"dual": {
+				Hostname: "dual",
+				IPv4:     "10.20.30.40",
+				IPv6:     "2001:db8::40",
+				Token:    "mnopqr",
 			},
 			"v6": {
 				Hostname: "v6",
-				Ip:       "2001:db8:85a3::8a2e:370:7334",
+				IPv6:     "2001:db8:85a3::8a2e:370:7334",
 				Token:    "ghijkl",
 			},
 		},
@@ -62,92 +83,106 @@ func buildRequest(queryName, queryType string) *Request {
 	}
 }
 
+func assertSingle(t *testing.T, records []*Response, err error, qtype, qname, content string) {
+	t.Helper()
+	assert.Nil(t, err)
+	if assert.Len(t, records, 1) {
+		assert.Equal(t, qtype, records[0].QType)
+		assert.Equal(t, qname, records[0].QName)
+		assert.Equal(t, content, records[0].Content)
+		assert.Equal(t, 5, records[0].TTL)
+	}
+}
+
+func assertNone(t *testing.T, records []*Response, err error) {
+	t.Helper()
+	assert.NotNil(t, err)
+	assert.Empty(t, records)
+}
+
 func TestRequestHandling(t *testing.T) {
 	_, _, lookup := buildLookup(".example.org")
 
-	response, err := lookup.Lookup(buildRequest("example.org", "SOA"))
+	records, err := lookup.Lookup(buildRequest("example.org.", "SOA"))
 	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "SOA", response.QType)
-	assert.Equal(t, "example.org", response.QName)
-	assert.Regexp(t, "dns\\.example\\.org\\. hostmaster\\.example.org\\. \\d+ 1800 3600 7200 5", response.Content)
-	assert.Equal(t, 5, response.TTL)
+	if assert.Len(t, records, 1) {
+		assert.Equal(t, "SOA", records[0].QType)
+		assert.Equal(t, "example.org.", records[0].QName)
+		assert.Regexp(t, "dns\\.example\\.org\\. hostmaster\\.example.org\\. \\d+ 1800 3600 7200 5", records[0].Content)
+	}
 
-	response, err = lookup.Lookup(buildRequest("example.org", "NS"))
-	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "NS", response.QType)
-	assert.Equal(t, "example.org", response.QName)
-	assert.Equal(t, "dns.example.org", response.Content)
-	assert.Equal(t, 5, response.TTL)
+	records, err = lookup.Lookup(buildRequest("example.org.", "NS"))
+	assertSingle(t, records, err, "NS", "example.org.", "dns.example.org")
 
-	response, err = lookup.Lookup(buildRequest("www.example.org", "ANY"))
+	// the apex has both SOA and NS
+	records, err = lookup.Lookup(buildRequest("example.org.", "ANY"))
 	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "A", response.QType)
-	assert.Equal(t, "www.example.org", response.QName)
-	assert.Equal(t, "10.11.12.13", response.Content)
-	assert.Equal(t, 5, response.TTL)
+	assert.Len(t, records, 2)
 
-	response, err = lookup.Lookup(buildRequest("www.example.org", "A"))
+	// every configured nameserver is announced
+	config, _, multi := buildLookup(".example.org")
+	config.Nameservers = []string{"ns1.example.net", "ns2.example.net"}
+	records, err = multi.Lookup(buildRequest("example.org.", "NS"))
 	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "A", response.QType)
-	assert.Equal(t, "www.example.org", response.QName)
-	assert.Equal(t, "10.11.12.13", response.Content)
-	assert.Equal(t, 5, response.TTL)
+	if assert.Len(t, records, 2) {
+		assert.Equal(t, "ns1.example.net", records[0].Content)
+		assert.Equal(t, "ns2.example.net", records[1].Content)
+	}
+
+	// SOA and NS only exist at the apex, otherwise hosts would look like zones or delegations
+	records, err = lookup.Lookup(buildRequest("www.example.org.", "SOA"))
+	assertNone(t, records, err)
+	records, err = lookup.Lookup(buildRequest("www.example.org.", "NS"))
+	assertNone(t, records, err)
+
+	records, err = lookup.Lookup(buildRequest("www.example.org.", "ANY"))
+	assertSingle(t, records, err, "A", "www.example.org.", "10.11.12.13")
+
+	records, err = lookup.Lookup(buildRequest("www.example.org", "A"))
+	assertSingle(t, records, err, "A", "www.example.org", "10.11.12.13")
 
 	// Allow hostname to be mixed case which is used by Let's Encrypt for a little bit more security
-	response, err = lookup.Lookup(buildRequest("wWW.eXaMPlE.oRg", "A"))
-	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "A", response.QType)
-	assert.Equal(t, "wWW.eXaMPlE.oRg", response.QName)
-	assert.Equal(t, "10.11.12.13", response.Content)
-	assert.Equal(t, 5, response.TTL)
+	records, err = lookup.Lookup(buildRequest("wWW.eXaMPlE.oRg.", "A"))
+	assertSingle(t, records, err, "A", "wWW.eXaMPlE.oRg.", "10.11.12.13")
 
-	response, err = lookup.Lookup(buildRequest("notexisting.example.org", "A"))
-	assert.NotNil(t, err)
-	assert.Nil(t, response)
+	records, err = lookup.Lookup(buildRequest("notexisting.example.org.", "A"))
+	assertNone(t, records, err)
+
+	records, err = lookup.Lookup(buildRequest("sub.www.example.org.", "ANY"))
+	assertNone(t, records, err)
+
+	records, err = lookup.Lookup(buildRequest("www.example.com.", "ANY"))
+	assertNone(t, records, err)
 
 	// Correct Handling of IPv4/IPv6 and ANY/A/AAAA
-	response, err = lookup.Lookup(buildRequest("v4.example.org", "ANY"))
+	records, err = lookup.Lookup(buildRequest("v4.example.org.", "ANY"))
+	assertSingle(t, records, err, "A", "v4.example.org.", "10.10.10.10")
+
+	records, err = lookup.Lookup(buildRequest("v4.example.org.", "A"))
+	assertSingle(t, records, err, "A", "v4.example.org.", "10.10.10.10")
+
+	records, err = lookup.Lookup(buildRequest("v4.example.org.", "AAAA"))
+	assertNone(t, records, err)
+
+	records, err = lookup.Lookup(buildRequest("v6.example.org.", "ANY"))
+	assertSingle(t, records, err, "AAAA", "v6.example.org.", "2001:db8:85a3::8a2e:370:7334")
+
+	records, err = lookup.Lookup(buildRequest("v6.example.org.", "AAAA"))
+	assertSingle(t, records, err, "AAAA", "v6.example.org.", "2001:db8:85a3::8a2e:370:7334")
+
+	records, err = lookup.Lookup(buildRequest("v6.example.org.", "A"))
+	assertNone(t, records, err)
+
+	// a host can have both an IPv4 and an IPv6 address
+	records, err = lookup.Lookup(buildRequest("dual.example.org.", "ANY"))
 	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "A", response.QType)
-	assert.Equal(t, "v4.example.org", response.QName)
-	assert.Equal(t, "10.10.10.10", response.Content)
-	assert.Equal(t, 5, response.TTL)
+	if assert.Len(t, records, 2) {
+		assert.Equal(t, "A", records[0].QType)
+		assert.Equal(t, "10.20.30.40", records[0].Content)
+		assert.Equal(t, "AAAA", records[1].QType)
+		assert.Equal(t, "2001:db8::40", records[1].Content)
+	}
 
-	response, err = lookup.Lookup(buildRequest("v4.example.org", "A"))
-	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "A", response.QType)
-	assert.Equal(t, "v4.example.org", response.QName)
-	assert.Equal(t, "10.10.10.10", response.Content)
-	assert.Equal(t, 5, response.TTL)
-
-	response, err = lookup.Lookup(buildRequest("v4.example.org", "AAAA"))
-	assert.NotNil(t, err)
-	assert.Nil(t, response)
-
-	response, err = lookup.Lookup(buildRequest("v6.example.org", "ANY"))
-	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "AAAA", response.QType)
-	assert.Equal(t, "v6.example.org", response.QName)
-	assert.Equal(t, "2001:db8:85a3::8a2e:370:7334", response.Content)
-	assert.Equal(t, 5, response.TTL)
-
-	response, err = lookup.Lookup(buildRequest("v6.example.org", "AAAA"))
-	assert.Nil(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "AAAA", response.QType)
-	assert.Equal(t, "v6.example.org", response.QName)
-	assert.Equal(t, "2001:db8:85a3::8a2e:370:7334", response.Content)
-	assert.Equal(t, 5, response.TTL)
-
-	response, err = lookup.Lookup(buildRequest("v6.example.org", "A"))
-	assert.NotNil(t, err)
-	assert.Nil(t, response)
+	records, err = lookup.Lookup(buildRequest("dual.example.org.", "AAAA"))
+	assertSingle(t, records, err, "AAAA", "dual.example.org.", "2001:db8::40")
 }

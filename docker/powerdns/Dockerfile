@@ -1,19 +1,9 @@
-FROM buildpack-deps:stretch-scm
+FROM powerdns/pdns-auth-51:5.1.4
 
-# the setup procedure according to https://repo.powerdns.com/ (Debian 9 Stretch)
-RUN echo "deb [arch=amd64] http://repo.powerdns.com/debian stretch-auth-43 main" > /etc/apt/sources.list.d/pdns.list \
-	&& echo "Package: pdns-*\nPin: origin repo.powerdns.com\nPin-Priority: 600\n" >> /etc/apt/preferences.d/pdns \
-	&& curl https://repo.powerdns.com/FD380FBB-pub.asc | apt-key add - \
-	&& apt-get -y update \
-	&& apt-get install -y pdns-server pdns-backend-remote \
-	&& rm -rf /var/lib/apt/lists/*
-
+# The official image renders every template listed in TEMPLATE_FILES from
+# /etc/powerdns/templates.d into /etc/powerdns/pdns.d at startup, using the
+# environment of the container (here PDNS_REMOTE_HTTP_HOST).
 COPY pdns.conf /etc/powerdns/pdns.conf
+COPY ddns.j2 /etc/powerdns/templates.d/ddns.j2
 
-COPY entrypoint.sh /
-RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
-
-EXPOSE 53
-
-CMD ["pdns_server", "--daemon=no"]
+ENV TEMPLATE_FILES=ddns
